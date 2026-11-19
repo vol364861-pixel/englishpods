@@ -1,0 +1,68 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#f5f4ee">
+  <title>EnglishPods · 在故事里听懂英语</title>
+  <link rel="stylesheet" href="/styles.css">
+  <script type="module" src="/app.js"></script>
+</head>
+<body>
+  <div class="app-shell">
+    <aside class="sidebar" aria-label="故事书架">
+      <a class="brand" href="/" aria-label="EnglishPods 首页"><span class="brand-mark" aria-hidden="true">ep<span>·</span></span><span>EnglishPods<small>让每个故事，都听得懂。</small></span></a>
+      <button id="new-story" class="new-story" type="button"><span aria-hidden="true">＋</span> 新建故事</button>
+      <div class="shelf-heading"><h2>我的故事</h2><button id="refresh-history" class="text-button" type="button" aria-label="刷新故事列表">刷新</button></div>
+      <p id="history-message" class="muted small">正在打开书架…</p>
+      <nav id="history" class="history" aria-label="最近的故事"></nav>
+      <div class="sidebar-footer"><span class="tiny-label">A LITTLE EVERY DAY</span><p>听一个故事，<br>离英语再近一点。</p><span class="footer-note">多角色配音 · 逐词跟读</span></div>
+    </aside>
+
+    <main class="main-content">
+      <header class="page-header"><div><span class="eyebrow">YOUR DAILY STORY SPACE</span><h1 id="page-title">在故事里，听懂英语。</h1><p id="page-subtitle">把一段文字，变成可以慢慢听、反复读的故事。</p></div><span class="edition">STORY STUDIO <span aria-hidden="true">/</span> 01</span></header>
+      <details class="configuration" id="configuration"><summary><span id="config-dot" class="status-dot"></span><span id="config-summary">正在检查生成服务</span><span class="config-details-label">服务详情 <span aria-hidden="true">⌄</span></span></summary><div class="config-content"><p>故事可随时保存。生成需要服务端配置 DeepSeek、Qwen 和 FFmpeg；这里不会接收或显示 API Key。</p><ul id="config-issues"></ul><p id="config-voices" class="small"></p><p class="small muted">配置就绪仅表示本地设置齐全，实际调用结果以生成任务为准。</p><button type="button" id="refresh-config" class="text-button">重新检查</button></div></details>
+      <div id="notice" class="notice" role="status" hidden></div>
+
+      <section id="composer" class="paper composer" aria-labelledby="composer-title">
+        <div class="section-top"><div><span class="eyebrow">01 / MAKE IT YOURS</span><h2 id="composer-title">从一个故事开始</h2></div><button type="button" id="load-example" class="text-button">载入书店示例 <span aria-hidden="true">↗</span></button></div>
+        <form id="story-form">
+          <label for="story-title">故事标题</label><input id="story-title" name="title" maxlength="200" placeholder="给这个故事起个名字" autocomplete="off" required>
+          <div class="label-row"><label for="story-text">英文原文</label><span id="character-count" class="small muted">0 字符</span></div>
+          <textarea id="story-text" name="text" rows="11" placeholder="On Tuesday afternoon, Maya, Ben, and I went back to Sam’s bookstore…" spellcheck="false" required></textarea>
+          <div class="composer-bottom"><p class="small muted">原文、标点和换行会完整保留。<br>旁白与角色将分别配音。</p><button id="submit-story" type="submit" class="button primary">保存并生成 <span aria-hidden="true">→</span></button></div>
+        </form>
+      </section>
+
+      <section id="task-panel" class="paper task-panel" aria-labelledby="task-title" hidden>
+        <div class="section-top"><div><span class="eyebrow">YOUR STORY</span><h2 id="task-title"></h2></div><span id="task-status" class="badge"></span></div>
+        <div id="generation-progress" class="generation-progress" hidden><div class="progress-heading"><strong id="stage-description">正在准备</strong><span class="small muted">离可听的故事更近一步</span></div><ol id="stage-list" class="stages"><li data-stage="QUEUED"><span>01</span>等待开始</li><li data-stage="SEGMENTING"><span>02</span>识别角色</li><li data-stage="REVIEWING"><span>03</span>复核分角</li><li data-stage="SYNTHESIZING"><span>04</span>合成配音</li><li data-stage="ASSEMBLING"><span>05</span>整理音轨</li></ol><p class="small muted">可以离开本页，任务进度和故事会保存在本机。</p></div>
+        <p id="checkpoint-detail" class="small muted" hidden></p>
+        <div id="task-error" class="error-panel" hidden><strong>这次生成未能完成</strong><p id="task-error-detail"></p><p class="small">重试会校验并复用已保存的分角结果；配音和音频拼接会重新执行，可能产生 API 费用。</p></div>
+        <div id="task-actions" class="task-actions" hidden><p id="task-action-hint" class="small muted"></p><button id="generate-story" class="button primary" type="button">开始生成 <span aria-hidden="true">→</span></button></div>
+        <div id="saved-story" class="saved-story" hidden><span class="tiny-label">ORIGINAL TEXT</span><div id="saved-text" class="story-text"></div></div>
+        <div id="result-loading" class="result-loading" hidden>正在打开音频与阅读时间轴…</div>
+        <div id="reading-view" hidden>
+          <div class="reader-heading"><div><span class="eyebrow">LISTEN. READ. REPEAT.</span><p>点击单词跳转 · 点击句子点读</p></div><span id="story-duration" class="badge subtle"></span></div>
+          <div id="story-reader" class="story-text reader" lang="en" aria-label="故事原文，单词与句子可点读"></div>
+          <div class="reading-note"><span class="legend-dot"></span><span>绿色跟随正在播放的单词。空格键播放 / 暂停，← → 跳转 5 秒。</span></div>
+        </div>
+      </section>
+
+      <div id="welcome-note" class="welcome-note"><span aria-hidden="true">⌁</span><p>不必赶进度。<br><strong>一句一句，听见自己的进步。</strong></p></div>
+      <footer class="main-footer"><span>EnglishPods</span><span>GOOD STORIES. BETTER ENGLISH.</span></footer>
+    </main>
+  </div>
+
+  <section id="player" class="player" aria-label="故事播放器" hidden>
+    <div class="player-inner">
+      <div class="player-story"><span class="player-icon" aria-hidden="true">♫</span><div><strong id="player-title"></strong><span id="playback-message" class="small muted">准备好，听听这个故事</span></div></div>
+      <div class="playback-controls"><button id="backward" class="icon-button secondary-control" type="button" aria-label="后退 5 秒" title="后退 5 秒">−5</button><button id="play-pause" class="play-button" type="button" aria-label="播放" title="播放 / 暂停（空格）"><span id="play-icon" aria-hidden="true">▶</span></button><button id="forward" class="icon-button secondary-control" type="button" aria-label="快进 5 秒" title="快进 5 秒">+5</button></div>
+      <div class="seek-control"><span id="current-time" class="time">0:00</span><input id="seek" type="range" min="0" max="1" step="0.01" value="0" aria-label="播放进度"><span id="total-time" class="time">0:00</span></div>
+      <div class="learning-controls"><label class="rate-label" for="playback-rate">倍速<select id="playback-rate" aria-label="播放倍速"><option value="0.5">0.5×</option><option value="0.75">0.75×</option><option value="1" selected>1×</option><option value="1.25">1.25×</option><option value="1.5">1.5×</option><option value="2">2×</option></select></label><button id="loop-sentence" class="loop-button" type="button" aria-pressed="false" title="循环当前选中的句子">↻ 单句循环</button></div>
+      <div class="sentence-controls"><button id="previous-sentence" class="text-button" type="button" aria-label="上一句">← 上一句</button><span id="sentence-label" class="small muted">选择一句开始练习</span><button id="replay-sentence" class="text-button" type="button">重听本句</button><button id="next-sentence" class="text-button" type="button" aria-label="下一句">下一句 →</button></div>
+    </div>
+    <audio id="audio" preload="metadata"></audio>
+  </section>
+</body>
+</html>

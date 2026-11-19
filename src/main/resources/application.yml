@@ -1,0 +1,29 @@
+spring:
+  application:
+    name: englishpods
+  datasource:
+    url: jdbc:sqlite:${STORY_DB_PATH:englishpods.db}
+    driver-class-name: org.sqlite.JDBC
+    hikari:
+      maximum-pool-size: 1
+      minimum-idle: 1
+      connection-init-sql: PRAGMA busy_timeout=5000
+  sql:
+    init:
+      mode: always
+  jackson:
+    deserialization:
+      fail-on-trailing-tokens: true
+    mapper:
+      allow-coercion-of-scalars: false
+
+server:
+  address: ${STORY_SERVER_ADDRESS:127.0.0.1}
+  error:
+    include-message: never
+    include-binding-errors: never
+    include-stacktrace: never
+    include-exception: false
+
+story:
+  audio-dir: ${STORY_AUDIO_DIR:data/audio}

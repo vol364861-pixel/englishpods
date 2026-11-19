@@ -3,6 +3,7 @@
 *.db-journal
 *.db-shm
 *.db-wal
+/data/audio/
 /data/
 /output/
 /.playwright-cli/
