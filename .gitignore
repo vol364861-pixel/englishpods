@@ -1,0 +1,14 @@
+/target/
+*.db
+*.db-journal
+*.db-shm
+*.db-wal
+/data/
+/output/
+/.playwright-cli/
+.env
+.env.*
+!.env.example
+/.idea/
+*.iml
+AGENTS.md
