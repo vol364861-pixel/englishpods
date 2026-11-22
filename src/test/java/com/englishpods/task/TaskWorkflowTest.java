@@ -5,6 +5,7 @@ import com.englishpods.task.dto.CreateTaskRequest;
 import com.englishpods.task.model.StoryTask;
 import com.englishpods.task.model.TaskStatus;
 import com.englishpods.task.repository.TaskRepository;
+import com.englishpods.task.service.TaskAudioCleanup;
 import com.englishpods.task.service.TaskService;
 import com.englishpods.task.service.TaskWorker;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -45,6 +46,7 @@ class TaskWorkflowTest {
     @MockitoBean StoryGenerationService generation;
     @Autowired TaskService tasks;
     @Autowired TaskRepository repository;
+    @Autowired TaskAudioCleanup audioCleanup;
     @Autowired TaskWorker worker;
     @Autowired JdbcTemplate jdbc;
     @Autowired MockMvc mvc;
@@ -80,13 +82,15 @@ class TaskWorkflowTest {
             return new GenerationResult(task.text(), null, 1.0,
                     List.of(new StorySegment("s1", "narration", "narrator", 0, task.text().length())),
                     List.of(new TimedWord("w1", "Hello", 0, 5, 0, .6, "sentence1")),
-                    List.of(new TimedSentence("sentence1", task.text(), 0, task.text().length(), 0, 1)));
+                    List.of(new TimedSentence("sentence1", task.text(), 0, task.text().length(), 0, 1)),
+                    Map.of("lily", new StoryCasting.CharacterVoice("female", "betty")));
         });
         assertThat(worker.processNext()).isTrue();
         assertThat(worker.processNext()).isFalse();
         assertThat(tasks.get(task.id().toString()).status()).isEqualTo(TaskStatus.COMPLETED);
         mvc.perform(get("/api/tasks/" + task.id() + "/result"))
                 .andExpect(status().isOk()).andExpect(jsonPath("$.audioUrl").value("/api/tasks/" + task.id() + "/audio"))
+                .andExpect(jsonPath("$.voiceMap.lily.voiceId").value("betty"))
                 .andExpect(jsonPath("$.text").value(task.text()));
         mvc.perform(get("/api/tasks/" + task.id() + "/audio").header("Range", "bytes=2-5"))
                 .andExpect(status().isPartialContent()).andExpect(header().string("Content-Range", "bytes 2-5/8"))
@@ -150,11 +154,86 @@ class TaskWorkflowTest {
     @Test
     void historyIsBoundedAndNewestFirst() throws Exception {
         StoryTask latest = null;
-        for (int index = 0; index < 35; index++) latest = create();
+        for (int index = 0; index < 35; index++) {
+            latest = create();
+            // Windows clock resolution can give consecutive inserts identical timestamps.
+            jdbc.update("UPDATE story_tasks SET created_at=? WHERE id=?",
+                    java.time.Instant.parse("2026-01-01T00:00:00Z").plusSeconds(index).toString(), latest.id().toString());
+        }
         var response = mvc.perform(get("/api/tasks")).andExpect(status().isOk()).andReturn().getResponse();
         var results = mapper.readTree(response.getContentAsString());
         assertThat(results.size()).isEqualTo(30);
         assertThat(results.get(0).get("id").asText()).isEqualTo(latest.id().toString());
+    }
+
+    @Test
+    void searchesOlderStoriesByTitleOrOriginalTextWithLiteralKeywords() throws Exception {
+        StoryTask older = tasks.create(new CreateTaskRequest("The Lost MAP", "A rare page with 100% certainty."));
+        jdbc.update("UPDATE story_tasks SET created_at=? WHERE id=?", "2025-01-01T00:00:00Z", older.id().toString());
+        for (int index = 0; index < 32; index++) create();
+
+        mvc.perform(get("/api/tasks").param("q", "  lost map  "))
+                .andExpect(status().isOk()).andExpect(jsonPath("$[0].id").value(older.id().toString()))
+                .andExpect(jsonPath("$.length()").value(1));
+        mvc.perform(get("/api/tasks").param("q", "100%"))
+                .andExpect(status().isOk()).andExpect(jsonPath("$[0].text").value(older.text()));
+        mvc.perform(get("/api/tasks").param("q", "_"))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.length()").value(0));
+    }
+
+    @Test
+    void deletesStoryCheckpointAndAllAttemptFilesAndKeepsOtherStories() throws Exception {
+        StoryTask deleted = create();
+        StoryTask other = create();
+        var audioRoot = directory.resolve("audio");
+        var taskDirectory = audioRoot.resolve(deleted.id().toString());
+        for (String attempt : List.of("1", "2")) {
+            var folder = Files.createDirectories(taskDirectory.resolve(attempt));
+            Files.writeString(folder.resolve("story.wav"), "test fixture");
+        }
+        var otherDirectory = Files.createDirectories(audioRoot.resolve(other.id().toString()));
+        Files.writeString(otherDirectory.resolve("keep.txt"), "other story");
+        jdbc.update("""
+            UPDATE story_tasks SET status='COMPLETED', attempt=2, result_json='{}',
+                reviewed_segments_json='[]', audio_path=? WHERE id=?
+            """, deleted.id() + "/2/story.wav", deleted.id().toString());
+
+        mvc.perform(delete("/api/tasks/" + deleted.id())).andExpect(status().isNoContent());
+        mvc.perform(get("/api/tasks/" + deleted.id() + "/result")).andExpect(status().isNotFound());
+        mvc.perform(get("/api/tasks/" + deleted.id() + "/audio")).andExpect(status().isNotFound());
+        assertThat(repository.findById(deleted.id())).isEmpty();
+        assertThat(taskDirectory).doesNotExist();
+        assertThat(otherDirectory.resolve("keep.txt")).exists();
+        assertThat(repository.pendingAudioCleanup()).isEmpty();
+    }
+
+    @Test
+    void deletionAllowsQueuedStoriesAndRejectsClaimedWork() throws Exception {
+        StoryTask active = create();
+        tasks.enqueue(active.id().toString());
+        repository.claimNext().orElseThrow();
+        StoryTask queued = create();
+        tasks.enqueue(queued.id().toString());
+
+        mvc.perform(delete("/api/tasks/" + active.id())).andExpect(status().isConflict());
+        mvc.perform(delete("/api/tasks/" + queued.id())).andExpect(status().isNoContent());
+        assertThat(repository.findById(active.id()).orElseThrow().status()).isEqualTo(TaskStatus.SEGMENTING);
+        assertThat(repository.claimNext()).isEmpty();
+    }
+
+    @Test
+    void resumesAudioCleanupFromDurableDeletionRecord() throws Exception {
+        StoryTask task = create();
+        var folder = Files.createDirectories(directory.resolve("audio").resolve(task.id().toString()));
+        Files.writeString(folder.resolve("incomplete-audio.wav"), "test fixture");
+        assertThat(repository.removeAndQueueAudioCleanup(task.id())).isTrue();
+        assertThat(repository.pendingAudioCleanup()).contains(task.id());
+        assertThat(folder).exists();
+
+        audioCleanup.retryPending();
+
+        assertThat(folder).doesNotExist();
+        assertThat(repository.pendingAudioCleanup()).doesNotContain(task.id());
     }
 
     @Test

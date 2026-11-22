@@ -10,6 +10,7 @@ import org.springframework.context.annotation.DependsOn;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.core.RowMapper;
 import org.springframework.stereotype.Repository;
+import org.springframework.transaction.annotation.Transactional;
 
 @Repository
 @DependsOn("taskSchemaMigration")
@@ -36,6 +37,33 @@ public class TaskRepository {
 
     public List<StoryTask> latest() {
         return jdbc.query("SELECT * FROM story_tasks ORDER BY created_at DESC,id DESC LIMIT 30", MAPPER);
+    }
+
+    public List<StoryTask> search(String keyword) {
+        return jdbc.query("""
+            SELECT * FROM story_tasks
+            WHERE instr(lower(title), lower(?)) > 0 OR instr(lower(source_text), lower(?)) > 0
+            ORDER BY created_at DESC,id DESC LIMIT 30
+            """, MAPPER, keyword, keyword);
+    }
+
+    @Transactional
+    public boolean removeAndQueueAudioCleanup(UUID id) {
+        String taskId = id.toString();
+        int removed = jdbc.update("""
+            DELETE FROM story_tasks WHERE id=? AND status IN ('CREATED','QUEUED','COMPLETED','FAILED')
+            """, taskId);
+        if (removed == 0) return false;
+        jdbc.update("INSERT INTO story_audio_cleanup (task_id) VALUES (?)", taskId);
+        return true;
+    }
+
+    public List<UUID> pendingAudioCleanup() {
+        return jdbc.query("SELECT task_id FROM story_audio_cleanup", (row, index) -> UUID.fromString(row.getString(1)));
+    }
+
+    public void finishAudioCleanup(UUID id) {
+        jdbc.update("DELETE FROM story_audio_cleanup WHERE task_id=?", id.toString());
     }
 
     public boolean enqueue(UUID id) {

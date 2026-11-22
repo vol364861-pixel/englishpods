@@ -10,7 +10,7 @@
 - 状态：CREATED/QUEUED/SEGMENTING/REVIEWING/SYNTHESIZING/ASSEMBLING/COMPLETED/FAILED；stage同生成阶段或null。
 - GET /api/tasks/{id}/result → GenerationResult（只有COMPLETED可读，否则409）。
 - GenerationResult {text,audioUrl,duration,segments,words,sentences}。
-- segment {id,kind,speakerId,sourceStart,sourceEnd}，kind=narration/dialogue。
+- segment {id,kind,speakerId,sourceStart,sourceEnd}，kind=narration/dialogue。GenerationResult 另含 voiceMap：实际角色身份 → {gender,voiceId,firstPerson}；角色数量不限于音色数，音色可复用。两轮分角检查点保存 {segments,voiceMap}。
 - word {id,text,sourceStart,sourceEnd,start,end,sentenceId}。
 - sentence {id,text,sourceStart,sourceEnd,start,end}。
 - 所有source范围为UTF-16左闭右开，时间为秒，字词显示取原文。时间边界合法、顺序单调。
@@ -50,7 +50,7 @@ record GenerationReadiness(boolean ready, List<String> issues, Map<String,String
 
 DEEPSEEK_API_KEY、DASHSCOPE_API_KEY仅从System.getenv读取（测试可通过构造函数显式注入桩凭证）。DEEPSEEK_ENDPOINT默认https://api.deepseek.com/chat/completions；DEEPSEEK_MODEL默认deepseek-flash；QWEN_TTS_ENDPOINT必须配置完整官方地域/工作空间URL；QWEN_TTS_MODEL默认qwen-audio-3.1-tts-flash；FFMPEG_PATH默认ffmpeg。
 
-音色默认：alex=Andy_v3.1、ben=Brian_v3.1、maya=Abby_v3.1、june=Annie_v3.1、sam=David_v3.1、narrator=Emily_v3.1。可通过独立properties和对应环境变量覆盖。STORY_FIRST_PERSON默认alex。后台数据目录STORY_AUDIO_DIR默认data/audio；数据库STORY_DB_PATH默认englishpods.db。
+音色默认：alex=Andy_v3.1、ben=Brian_v3.1、maya=Abby_v3.1、june=Annie_v3.1、betty=Betty_v3.1、sam=David_v3.1、narrator=Beth_v3.1。Beth 仅用于旁白。故事中明确同名的角色固定使用对应槽位；其他实际角色保留自己的身份，由模型根据姓名与上下文推测性别并分配音色，明确代词与人物描述优先。未知性别才回退 sam。可通过独立 properties 和对应环境变量覆盖。STORY_FIRST_PERSON 默认 alex：故事主角 I 的对白固定使用 alex / Andy_v3.1，真实身份与性别保持独立；voiceMap 中以 firstPerson=true 标记唯一主角，由服务端强制固定音色，该规则优先于性别与同名分配。未具名默认身份 alex；其他角色对白里的 I 不触发此规则。叙述文字仍用 narrator / Beth_v3.1。可配置其他固定槽位，显式 auto 才按性别分配。分角结构版本为 v4，旧配置指纹重新分角。后台数据目录 STORY_AUDIO_DIR 默认 data/audio；数据库 STORY_DB_PATH 默认 englishpods.db。
 
 Qwen官方POST input包含text,voice,format=wav,sample_rate=24000,language_hints=[en],word_timestamp_enabled=true；header X-DashScope-SSE:enable。解析SSE data JSON；output.sentence.words中的text,begin_index,end_index,begin_time,end_time；output.original_text及sentence.index辅助定位；成功finish_reason=stop；audio.url提供完整音频，或将audio.data按顺序汇集。下载音频不带API密钥、不记录完整签名URL，限制协议/重定向与长度，HTTP有超时和有限重试。每个TTS块尽量单句并且低于接口长度限制，以便消除句内索引和时间歧义；词文本必须顺序匹配原文，禁止凭时长生成时间戳。
 

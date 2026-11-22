@@ -19,3 +19,14 @@ CREATE TABLE IF NOT EXISTS story_tasks (
     checkpoint_origin TEXT,
     reused_stage TEXT
 );
+
+CREATE TABLE IF NOT EXISTS story_audio_cleanup (
+    task_id TEXT PRIMARY KEY NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS listening_periods (
+    started_at_ms INTEGER PRIMARY KEY NOT NULL,
+    ended_at_ms INTEGER NOT NULL CHECK (ended_at_ms > started_at_ms)
+);
+
+CREATE INDEX IF NOT EXISTS listening_periods_end ON listening_periods (ended_at_ms);

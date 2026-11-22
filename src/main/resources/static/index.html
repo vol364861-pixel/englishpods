@@ -10,18 +10,55 @@
 </head>
 <body>
   <div class="app-shell">
-    <aside class="sidebar" aria-label="故事书架">
-      <a class="brand" href="/" aria-label="EnglishPods 首页"><span class="brand-mark" aria-hidden="true">ep<span>·</span></span><span>EnglishPods<small>让每个故事，都听得懂。</small></span></a>
-      <button id="new-story" class="new-story" type="button"><span aria-hidden="true">＋</span> 新建故事</button>
-      <div class="shelf-heading"><h2>我的故事</h2><button id="refresh-history" class="text-button" type="button" aria-label="刷新故事列表">刷新</button></div>
-      <p id="history-message" class="muted small">正在打开书架…</p>
-      <nav id="history" class="history" aria-label="最近的故事"></nav>
-      <div class="sidebar-footer"><span class="tiny-label">A LITTLE EVERY DAY</span><p>听一个故事，<br>离英语再近一点。</p><span class="footer-note">多角色配音 · 逐词跟读</span></div>
+    <aside class="sidebar" aria-label="故事与设置">
+      <div class="sidebar-toolbar">
+        <a class="brand" href="/" aria-label="EnglishPods 首页">
+          <span class="brand-mark" aria-hidden="true">ep<span>·</span></span>
+          <span>EnglishPods</span>
+        </a>
+        <button id="toggle-sidebar" class="sidebar-toggle" type="button" aria-controls="sidebar-content" aria-expanded="true" aria-label="收起侧边栏" title="收起侧边栏">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <rect x="3" y="4.5" width="18" height="15" rx="3"/>
+            <path d="M9 4.5v15"/>
+            <path class="sidebar-chevron" d="m16 9-3 3 3 3"/>
+          </svg>
+        </button>
+        <button id="new-story" class="new-story" type="button" aria-label="新建故事" title="新建故事">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" aria-hidden="true">
+            <path d="M12 5v14M5 12h14"/>
+          </svg>
+          <span class="new-story-label">新建故事</span>
+        </button>
+      </div>
+      <div id="sidebar-content" class="sidebar-content">
+        <div class="shelf-heading"><h2>我的故事</h2><button id="refresh-history" class="text-button" type="button" aria-label="刷新故事列表">刷新</button></div>
+        <div class="shelf-search">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" aria-hidden="true"><circle cx="10.5" cy="10.5" r="5.5"/><path d="m15 15 4 4"/></svg>
+          <input id="search-stories" type="search" maxlength="200" aria-label="搜索故事标题或正文" placeholder="搜索标题或正文" autocomplete="off">
+        </div>
+        <p id="history-message" class="muted small" role="status">正在打开书架…</p>
+        <nav id="history" class="history" aria-label="我的故事列表"></nav>
+        <button id="open-listening-board" class="listening-link" type="button">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 4v16h16M7 15l4-5 4 2 5-6"/></svg>
+          <span>每日收听时长</span><span class="listening-link-arrow" aria-hidden="true">↗</span>
+        </button>
+        <details class="configuration" id="configuration">
+          <summary><span id="config-dot" class="status-dot"></span><span id="config-summary">正在检查生成服务</span><span class="config-chevron" aria-hidden="true"></span></summary>
+          <div class="config-content"><p>故事可随时保存。生成需要服务端配置 DeepSeek、Qwen 和 FFmpeg。</p><ul id="config-issues"></ul><p id="config-voices" class="small"></p><p class="small muted">配置就绪仅表示本地设置齐全，实际调用结果以生成任务为准。</p><button type="button" id="refresh-config" class="text-button">重新检查</button></div>
+        </details>
+      </div>
     </aside>
+    <div id="sidebar-backdrop" class="sidebar-backdrop" aria-hidden="true" hidden></div>
 
     <main class="main-content">
-      <header class="page-header"><div><span class="eyebrow">YOUR DAILY STORY SPACE</span><h1 id="page-title">在故事里，听懂英语。</h1><p id="page-subtitle">把一段文字，变成可以慢慢听、反复读的故事。</p></div><span class="edition">STORY STUDIO <span aria-hidden="true">/</span> 01</span></header>
-      <details class="configuration" id="configuration"><summary><span id="config-dot" class="status-dot"></span><span id="config-summary">正在检查生成服务</span><span class="config-details-label">服务详情 <span aria-hidden="true">⌄</span></span></summary><div class="config-content"><p>故事可随时保存。生成需要服务端配置 DeepSeek、Qwen 和 FFmpeg；这里不会接收或显示 API Key。</p><ul id="config-issues"></ul><p id="config-voices" class="small"></p><p class="small muted">配置就绪仅表示本地设置齐全，实际调用结果以生成任务为准。</p><button type="button" id="refresh-config" class="text-button">重新检查</button></div></details>
+      <header class="page-header">
+        <div><span class="eyebrow">YOUR DAILY STORY SPACE</span><h1 id="page-title">在故事里，听懂英语。</h1><p id="page-subtitle">把一段文字，变成可以慢慢听、反复读的故事。</p></div>
+        <div id="listening-timer" class="listening-timer" role="timer" aria-label="今日收听时长（北京时间）">
+          <img src="/timer-mascot.webp" alt="" width="360" height="178">
+          <span class="timer-label"><span aria-hidden="true"></span>今日收听 · 北京时间</span>
+          <span id="listening-timer-value">00:00:00</span>
+        </div>
+      </header>
       <div id="notice" class="notice" role="status" hidden></div>
 
       <section id="composer" class="paper composer" aria-labelledby="composer-title">
@@ -35,7 +72,7 @@
       </section>
 
       <section id="task-panel" class="paper task-panel" aria-labelledby="task-title" hidden>
-        <div class="section-top"><div><span class="eyebrow">YOUR STORY</span><h2 id="task-title"></h2></div><span id="task-status" class="badge"></span></div>
+        <div class="section-top"><div><span class="eyebrow">YOUR STORY</span><h2 id="task-title" tabindex="-1"></h2></div><span id="task-status" class="badge"></span></div>
         <div id="generation-progress" class="generation-progress" hidden><div class="progress-heading"><strong id="stage-description">正在准备</strong><span class="small muted">离可听的故事更近一步</span></div><ol id="stage-list" class="stages"><li data-stage="QUEUED"><span>01</span>等待开始</li><li data-stage="SEGMENTING"><span>02</span>识别角色</li><li data-stage="REVIEWING"><span>03</span>复核分角</li><li data-stage="SYNTHESIZING"><span>04</span>合成配音</li><li data-stage="ASSEMBLING"><span>05</span>整理音轨</li></ol><p class="small muted">可以离开本页，任务进度和故事会保存在本机。</p></div>
         <p id="checkpoint-detail" class="small muted" hidden></p>
         <div id="task-error" class="error-panel" hidden><strong>这次生成未能完成</strong><p id="task-error-detail"></p><p class="small">重试会校验并复用已保存的分角结果；配音和音频拼接会重新执行，可能产生 API 费用。</p></div>
@@ -53,6 +90,33 @@
       <footer class="main-footer"><span>EnglishPods</span><span>GOOD STORIES. BETTER ENGLISH.</span></footer>
     </main>
   </div>
+
+  <dialog id="story-delete-dialog" class="paper story-delete-dialog" aria-labelledby="story-delete-heading" aria-describedby="story-delete-description">
+    <form method="dialog">
+      <h2 id="story-delete-heading">删除故事</h2>
+      <p id="story-delete-description"></p>
+      <div class="dialog-actions">
+        <button class="button dialog-cancel" value="cancel" autofocus>取消</button>
+        <button class="button danger-button" value="delete">确认删除</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="listening-board" class="paper listening-board" aria-labelledby="listening-board-title">
+    <div class="listening-board-header">
+      <div><h2 id="listening-board-title">每日收听时长</h2><p class="muted small">北京时间 · 周一至周日</p></div>
+      <form method="dialog"><button class="board-close" aria-label="关闭收听时长展板" autofocus>×</button></form>
+    </div>
+    <div class="week-picker">
+      <button id="previous-listening-week" type="button" aria-label="上一周" disabled>←</button>
+      <p id="listening-week-range" role="status">正在加载…</p>
+      <button id="next-listening-week" type="button" aria-label="下一周" disabled>→</button>
+    </div>
+    <p class="week-total muted small">周合计 <strong id="listening-week-total">—</strong></p>
+    <p id="listening-board-message" class="small muted" role="status" hidden></p>
+    <canvas id="listening-chart" aria-hidden="true"></canvas>
+    <ol id="listening-days" class="listening-days" aria-label="本周每天的收听时长"></ol>
+  </dialog>
 
   <section id="player" class="player" aria-label="故事播放器" hidden>
     <div class="player-inner">

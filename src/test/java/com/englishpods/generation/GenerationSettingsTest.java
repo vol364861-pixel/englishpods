@@ -7,14 +7,36 @@ import org.springframework.mock.env.MockEnvironment;
 import static org.junit.jupiter.api.Assertions.*;
 
 class GenerationSettingsTest {
+    @Test void defaultsUseDeepSeekAndDedicatedNarratorAndThreeFemaleSlots() {
+        var config = GenerationSettings.from(environment(), "test-only-deepseek", "test-only-qwen");
+        assertEquals("deepseek", config.llmProvider());
+        assertEquals("alex", config.firstPersonSpeaker());
+        assertEquals("Andy_v3.1", config.voices().get("alex"));
+        assertEquals("Beth_v3.1", config.voices().get("narrator"));
+        assertEquals("Betty_v3.1", config.voices().get("betty"));
+        assertEquals("Abby_v3.1", config.voices().get("maya"));
+        assertEquals("Annie_v3.1", config.voices().get("june"));
+        assertTrue(config.readiness().ready());
+        assertTrue(GenerationSettings.from(environment().withProperty("STORY_FIRST_PERSON", "betty"),
+                "test-only-deepseek", "test-only-qwen").readiness().ready());
+    }
+
+    @Test void bethCannotBeAssignedToDialogueEvenByEnvironmentOverride() {
+        var config = GenerationSettings.from(environment().withProperty("STORY_VOICE_MAYA", "Beth_v3.1"),
+                "test-only-deepseek", "test-only-qwen");
+        assertTrue(config.readiness().issues().stream().anyMatch(s -> s.contains("Beth_v3.1 仅用于旁白")));
+        var firstPerson = GenerationSettings.from(environment().withProperty("STORY_FIRST_PERSON", "narrator"),
+                "test-only-deepseek", "test-only-qwen");
+        assertFalse(firstPerson.readiness().ready());
+    }
     private MockEnvironment environment() {
         return new MockEnvironment()
                 .withProperty("QWEN_LLM_ENDPOINT", "https://workspace.cn-beijing.maas.aliyuncs.com/compatible-mode/v1/chat/completions")
                 .withProperty("QWEN_TTS_ENDPOINT", "https://workspace.cn-beijing.maas.aliyuncs.com/api/v1/services/audio/tts/SpeechSynthesizer");
     }
 
-    @Test void defaultsToBailianQwen38AndNeedsNoDeepSeekConfiguration() {
-        var config = GenerationSettings.from(environment().withProperty("DEEPSEEK_ENDPOINT", "invalid")
+    @Test void explicitBailianQwen38NeedsNoDeepSeekConfiguration() {
+        var config = GenerationSettings.from(environment().withProperty("STORY_LLM_PROVIDER", "bailian").withProperty("DEEPSEEK_ENDPOINT", "invalid")
                 .withProperty("DEEPSEEK_MODEL", ""), null, "test-only-qwen");
         assertEquals("bailian", config.llmProvider());
         assertEquals("qwen3.8-max", config.llmModel());
@@ -36,7 +58,7 @@ class GenerationSettingsTest {
     }
 
     @Test void everyModelCanBeOverriddenIndependently() {
-        var env = environment().withProperty("DEEPSEEK_MODEL", "custom-deepseek")
+        var env = environment().withProperty("STORY_LLM_PROVIDER", "bailian").withProperty("DEEPSEEK_MODEL", "custom-deepseek")
                 .withProperty("QWEN_LLM_MODEL", "custom-qwen-text")
                 .withProperty("QWEN_TTS_MODEL", "custom-qwen-speech");
         var bailian = GenerationSettings.from(env, "test-only-deepseek", "test-only-qwen");
@@ -57,7 +79,7 @@ class GenerationSettingsTest {
     }
 
     @Test void validatesActiveEndpointModelAndEnvironmentOnlyCredentials() {
-        var env = environment().withProperty("QWEN_LLM_ENDPOINT", "http://external.invalid/chat/completions")
+        var env = environment().withProperty("STORY_LLM_PROVIDER", "bailian").withProperty("QWEN_LLM_ENDPOINT", "http://external.invalid/chat/completions")
                 .withProperty("QWEN_LLM_MODEL", " ")
                 .withProperty("DASHSCOPE_API_KEY", "property-key-must-not-be-used");
         var config = GenerationSettings.from(env, null, null);

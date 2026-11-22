@@ -60,14 +60,17 @@ final class StoryText {
         return result;
     }
 
-    static List<Chunk> chunks(String text, List<StorySegment> segments, GenerationSettings settings) {
+    static List<Chunk> chunks(String text, StoryCasting casting, GenerationSettings settings) {
         List<Chunk> chunks = new ArrayList<>();
         for (Range sentence : sentences(text)) {
-            for (StorySegment segment : segments) {
+            for (StorySegment segment : casting.segments()) {
                 int start = Math.max(sentence.start(), segment.sourceStart());
                 int end = Math.min(sentence.end(), segment.sourceEnd());
                 if (start >= end) continue;
-                String voice = settings.voices().getOrDefault(segment.speakerId(), settings.voices().get("sam"));
+                String slot = segment.kind().equals("narration") ? "narrator"
+                        : casting.voiceMap().get(segment.speakerId()).voiceId();
+                String voice = settings.voices().get(slot);
+                if (voice == null || voice.isBlank()) throw new GenerationException("缺少角色音色配置");
                 if (!chunks.isEmpty()) {
                     Chunk last = chunks.getLast();
                     if (last.end() == start && last.start() >= sentence.start() && last.voice().equals(voice)

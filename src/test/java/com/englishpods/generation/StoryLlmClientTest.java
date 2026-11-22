@@ -29,7 +29,7 @@ class StoryLlmClientTest {
     private int status = 200;
 
     @BeforeEach void start() throws Exception {
-        content = mapper.writeValueAsString(Map.of("segments", List.of(
+        content = mapper.writeValueAsString(Map.of("voiceMap", Map.of("alex", Map.of("gender", "male", "voiceId", "alex")), "segments", List.of(
                 Map.of("kind", "narration", "speakerId", "narrator", "text", "I smiled. 😀 "),
                 Map.of("kind", "dialogue", "speakerId", "alex", "text", "“Hi!”"))));
         server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
@@ -68,8 +68,8 @@ class StoryLlmClientTest {
         var initial = segmenter.segment(story, null);
         var reviewed = segmenter.segment(story, initial);
         assertEquals(initial, reviewed);
-        assertEquals(story.length(), reviewed.getLast().sourceEnd());
-        assertEquals("“Hi!”", story.substring(reviewed.getLast().sourceStart(), reviewed.getLast().sourceEnd()));
+        assertEquals(story.length(), reviewed.segments().getLast().sourceEnd());
+        assertEquals("“Hi!”", story.substring(reviewed.segments().getLast().sourceStart(), reviewed.segments().getLast().sourceEnd()));
         assertEquals(List.of(config.usesBailian() ? "/bailian/chat/completions" : "/deepseek",
                 config.usesBailian() ? "/bailian/chat/completions" : "/deepseek"), paths);
         assertEquals(List.of("Bearer " + config.llmKey(), "Bearer " + config.llmKey()), authorization);
@@ -87,6 +87,7 @@ class StoryLlmClientTest {
         var pieces = new ArrayList<String>();
         reviewInput.path("previousSegments").forEach(piece -> pieces.add(piece.path("text").asText()));
         assertEquals(story, String.join("", pieces));
+        assertEquals("alex", reviewInput.at("/previousVoiceMap/alex/voiceId").asText());
     }
 
     @ParameterizedTest @ValueSource(strings = {"deepseek", "bailian"})
@@ -118,5 +119,49 @@ class StoryLlmClientTest {
         content = "{\"segments\":[{\"kind\":\"narration\",\"speakerId\":\"narrator\",\"text\":\"changed\"}]}";
         assertTrue(assertThrows(GenerationException.class, () -> segmenter.segment(story, null))
                 .getMessage().contains("改写"));
+    }
+
+    @ParameterizedTest @ValueSource(strings = {"deepseek", "bailian"})
+    void reviewCanCorrectGenderAndVoiceWithoutRenamingCharacter(String provider) throws Exception {
+        story = "“Hi!” she asked.";
+        var output = mapper.createObjectNode();
+        output.putArray("segments")
+                .addObject().put("kind", "dialogue").put("speakerId", "lily").put("text", "“Hi!”");
+        output.withArray("segments").addObject().put("kind", "narration").put("speakerId", "narrator").put("text", " she asked.");
+        output.putObject("voiceMap").putObject("lily").put("gender", "unknown").put("voiceId", "sam");
+        content = mapper.writeValueAsString(output);
+        var segmenter = new StorySegmenter(settings(provider), mapper, new GenerationHttpClient());
+        var initial = segmenter.segment(story, null);
+        output.withObject("/voiceMap/lily").put("gender", "female").put("voiceId", "betty");
+        content = mapper.writeValueAsString(output);
+        var reviewed = segmenter.segment(story, initial);
+        assertEquals("lily", reviewed.segments().getFirst().speakerId());
+        assertEquals(new StoryCasting.CharacterVoice("female", "betty"), reviewed.voiceMap().get("lily"));
+        var review = mapper.readTree(requests.getLast().at("/messages/1/content").asText());
+        assertEquals("sam", review.at("/previousVoiceMap/lily/voiceId").asText());
+        for (var request : requests) {
+            String prompt = request.at("/messages/0/content").asText();
+            assertTrue(prompt.contains("she asked"));
+            assertTrue(prompt.contains("betty"));
+            assertTrue(prompt.contains("voiceMap"));
+        }
+    }
+
+    @ParameterizedTest @ValueSource(strings = {
+            "{}", "{\"lily\":{\"gender\":\"female\",\"voiceId\":\"sam\"}}",
+            "{\"lily\":{\"gender\":\"male\",\"voiceId\":\"maya\"}}",
+            "{\"lily\":{\"gender\":\"female\",\"voiceId\":\"narrator\"}}",
+            "{\"lily\":{\"gender\":\"female\",\"voiceId\":\"Beth_v3.1\"}}",
+            "{\"lily\":{\"gender\":\"unknown\",\"voiceId\":\"betty\"}}",
+            "{\"lily\":{\"gender\":\"invalid\",\"voiceId\":\"sam\"}}",
+            "{\"narrator\":{\"gender\":\"female\",\"voiceId\":\"maya\"}}"})
+    void invalidOrMissingCharacterMappingNeverReachesTts(String mapping) throws Exception {
+        story = "“Hello!”";
+        var output = mapper.createObjectNode();
+        output.putArray("segments").addObject().put("kind", "dialogue").put("speakerId", "lily").put("text", story);
+        output.set("voiceMap", mapper.readTree(mapping));
+        content = mapper.writeValueAsString(output);
+        assertThrows(GenerationException.class,
+                () -> new StorySegmenter(settings("deepseek"), mapper, new GenerationHttpClient()).segment(story, null));
     }
 }

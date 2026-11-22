@@ -79,7 +79,7 @@ public class TaskWorker {
             if (!Files.isRegularFile(audio) || Files.isSymbolicLink(audio) || Files.size(audio) == 0)
                 throw new GenerationException("Generation produced no audio file.");
             var result = new GenerationResult(generated.text(), "/api/tasks/" + task.id() + "/audio",
-                    generated.duration(), generated.segments(), generated.words(), generated.sentences());
+                    generated.duration(), generated.segments(), generated.words(), generated.sentences(), generated.voiceMap());
             repository.complete(task, mapper.writeValueAsString(result), tasks.audioReference(audio));
         } catch (GenerationException exception) {
             repository.fail(task, exception.getMessage());

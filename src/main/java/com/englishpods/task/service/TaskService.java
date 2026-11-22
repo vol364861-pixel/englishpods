@@ -25,18 +25,22 @@ public class TaskService {
     private final StoryGenerationService generation;
     private final ObjectMapper mapper;
     private final Path audioRoot;
+    private final TaskAudioCleanup audioCleanup;
 
     @Autowired
     public TaskService(TaskRepository repository, StoryGenerationService generation, ObjectMapper mapper,
-                       @Value("${story.audio-dir:data/audio}") String audioRoot) {
+                       @Value("${story.audio-dir:data/audio}") String audioRoot, TaskAudioCleanup audioCleanup) {
         this.repository = repository;
         this.generation = generation;
         this.mapper = mapper;
         this.audioRoot = Path.of(audioRoot).toAbsolutePath().normalize();
+        this.audioCleanup = audioCleanup;
     }
 
     // Kept for small persistence tests and embedding the create/query service.
-    public TaskService(TaskRepository repository) { this(repository, null, new ObjectMapper(), "data/audio"); }
+    public TaskService(TaskRepository repository) {
+        this(repository, null, new ObjectMapper(), "data/audio", new TaskAudioCleanup(repository, "data/audio"));
+    }
 
     public StoryTask create(CreateTaskRequest request) {
         Instant now = Instant.now();
@@ -57,6 +61,20 @@ public class TaskService {
     }
 
     public List<StoryTask> latest() { return repository.latest(); }
+
+    public List<StoryTask> search(String query) {
+        String keyword = query.strip();
+        return keyword.isEmpty() ? latest() : repository.search(keyword);
+    }
+
+    public boolean delete(String id) {
+        UUID taskId = get(id).id();
+        if (!repository.removeAndQueueAudioCleanup(taskId)) {
+            if (repository.findById(taskId).isEmpty()) throw new TaskNotFoundException();
+            throw new TaskOperationException(HttpStatus.CONFLICT, "Wait for generation to finish before deleting this story.");
+        }
+        return audioCleanup.deleteFiles(taskId);
+    }
     public GenerationReadiness readiness() { return generation.readiness(); }
 
     public StoryTask enqueue(String id) {

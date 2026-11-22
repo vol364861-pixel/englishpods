@@ -46,9 +46,9 @@ public class StoryGenerationService {
             StorySegmenter segmenter = new StorySegmenter(settings, mapper, http);
             SegmentationCheckpoints checkpoint = checkpoints == null ? null
                     : new SegmentationCheckpoints(checkpoints, mapper, settings, text, directory);
-            List<StorySegment> segments = checkpoint == null ? null : checkpoint.reviewed();
-            if (segments == null) {
-                List<StorySegment> initial = checkpoint == null ? null : checkpoint.initial();
+            StoryCasting casting = checkpoint == null ? null : checkpoint.reviewed();
+            if (casting == null) {
+                StoryCasting initial = checkpoint == null ? null : checkpoint.initial();
                 if (initial == null) {
                     stageChanged.accept("SEGMENTING");
                     initial = segmenter.segment(text, null);
@@ -56,11 +56,11 @@ public class StoryGenerationService {
                 }
                 mapper.writeValue(directory.resolve("segments-initial.json").toFile(), initial);
                 stageChanged.accept("REVIEWING");
-                segments = segmenter.segment(text, initial);
-                if (checkpoint != null) checkpoint.saveReviewed(segments);
+                casting = segmenter.segment(text, initial);
+                if (checkpoint != null) checkpoint.saveReviewed(casting);
             }
-            mapper.writeValue(directory.resolve("segments-reviewed.json").toFile(), segments);
-            List<StoryText.Chunk> chunks = StoryText.chunks(text, segments, settings);
+            mapper.writeValue(directory.resolve("segments-reviewed.json").toFile(), casting);
+            List<StoryText.Chunk> chunks = StoryText.chunks(text, casting, settings);
             if (chunks.isEmpty()) throw new GenerationException("没有可合成的故事片段");
             QwenSpeechClient speech = new QwenSpeechClient(settings, mapper, http);
             AudioAssembler assembler = new AudioAssembler(settings.ffmpeg(), directory, settings.pauseMillis());
@@ -119,7 +119,7 @@ public class StoryGenerationService {
             stageChanged.accept("ASSEMBLING");
             double duration = assembler.finish();
             if (previousEnd > duration + 1.0 / 24000) throw new GenerationException("最终时间轴超出音频时长");
-            GenerationResult result = new GenerationResult(text, "", duration, segments, List.copyOf(words), List.copyOf(sentences));
+            GenerationResult result = new GenerationResult(text, "", duration, casting.segments(), List.copyOf(words), List.copyOf(sentences), casting.voiceMap());
             mapper.writeValue(directory.resolve("timeline.json").toFile(), result);
             return result;
         } catch (GenerationException e) { throw e; }

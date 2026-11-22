@@ -1,6 +1,6 @@
 # EnglishPods
 
-Java 21 / Spring Boot 单体英语学习应用：输入英文故事，阿里百炼或 DeepSeek 分角和复核，Qwen 多角色配音并提供单词时间戳，FFmpeg 拼接，网页按播放进度逐词高亮。当前默认使用百炼 `qwen3.8-max` 完成两轮分角。
+Java 21 / Spring Boot 单体英语学习应用：输入英文故事，阿里百炼或 DeepSeek 分角和复核，Qwen 多角色配音并提供单词时间戳，FFmpeg 拼接，网页按播放进度逐词高亮。默认使用 DeepSeek 完成两轮分角；显式设置 `STORY_LLM_PROVIDER=bailian` 时仍可使用百炼文本模型。
 
 前端只使用 HTML、CSS 和原生 JavaScript；任务、阶段、失败信息和最终时间轴保存在 SQLite，音频保存在本机目录。
 
@@ -9,7 +9,7 @@ Java 21 / Spring Boot 单体英语学习应用：输入英文故事，阿里百�
 需要 Java 21 和 FFmpeg。项目自带官方 Maven Wrapper，不需要全局安装 Maven。首次构建需要联网下载依赖。
 
 ```powershell
-# 在项目目录运行
+Set-Location 'D:\DevelopAI\englishpods'
 .\mvnw.cmd clean verify
 java -jar .\target\englishpods-0.0.1-SNAPSHOT.jar
 ```
@@ -37,7 +37,7 @@ if (-not (Test-Path -LiteralPath .env)) { Copy-Item .env.example .env }
 已有 `.env` 时添加或更新以下配置即可，不要覆盖已有密钥：
 
 ```dotenv
-STORY_LLM_PROVIDER=bailian
+STORY_LLM_PROVIDER=deepseek
 QWEN_LLM_MODEL=qwen3.8-max
 DEEPSEEK_MODEL=deepseek-flash
 QWEN_TTS_MODEL=qwen-audio-3.1-tts-flash
@@ -48,7 +48,7 @@ QWEN_TTS_ENDPOINT=https://YOUR_WORKSPACE_ID.cn-beijing.maas.aliyuncs.com/api/v1/
 
 将 `YOUR_WORKSPACE_ID` 换为实际工作空间 ID，并在 `.env` 的 `DASHSCOPE_API_KEY=` 后填写百炼密钥。百炼文本和 TTS 共用该密钥；选择百炼时 `DEEPSEEK_API_KEY` 可以留空。Qwen3.8 在这里用于文本分角，语音仍使用支持词时间戳的 TTS 型号；修改 `QWEN_TTS_MODEL` 时也要检查音色和词时间戳兼容性。
 
-切回 DeepSeek 只需设置 `STORY_LLM_PROVIDER=deepseek`，并填写 `DEEPSEEK_API_KEY`；两轮分角都会改用 `DEEPSEEK_MODEL`，TTS 仍需要 `DASHSCOPE_API_KEY`。升级前只配置过 DeepSeek 的用户也需要显式设置此选项。无自动跨供应商降级；供应商、所选型号或端点变化会使旧分角检查点失效，下次重试重新执行两轮。新检查点也不会复用升级前旧指纹；更早且没有配置记录的文件检查点只允许 DeepSeek 按原有规则导入。
+默认使用 DeepSeek，需要 `DEEPSEEK_API_KEY`，TTS 仍需要 `DASHSCOPE_API_KEY`。私有 `.env` 中已有的显式供应商设置优先，不会自动改写。无自动跨供应商降级；供应商、所选型号、端点、提示词或分角结构版本变化会使旧分角检查点失效，下次生成重新执行两轮。没有 `voiceMap` 的旧检查点和旧分角文件不能复用；已生成的历史音频仍保持原样。
 
 也可完全使用进程环境变量，在 PowerShell 中交互输入密钥，避免出现在命令历史：
 
@@ -65,7 +65,7 @@ java -jar .\target\englishpods-0.0.1-SNAPSHOT.jar
 
 | 变量 | 默认值 / 用途 |
 | --- | --- |
-| STORY_LLM_PROVIDER | bailian；可选 deepseek，两轮分角和复核共用此选择 |
+| STORY_LLM_PROVIDER | deepseek；可显式选 bailian，两轮分角和复核共用此选择 |
 | DEEPSEEK_API_KEY | 仅选择 deepseek 时必填 |
 | DASHSCOPE_API_KEY | 必填，Qwen 配音和百炼文本共用 |
 | DEEPSEEK_ENDPOINT | https://api.deepseek.com/chat/completions |
@@ -77,7 +77,7 @@ java -jar .\target\englishpods-0.0.1-SNAPSHOT.jar
 | FFMPEG_PATH | ffmpeg，也可指定可执行文件绝对路径 |
 | STORY_DB_PATH | englishpods.db，相对于启动时工作目录 |
 | STORY_AUDIO_DIR | data/audio，相对于启动时工作目录 |
-| STORY_FIRST_PERSON | alex，第一人称对白的默认角色 |
+| STORY_FIRST_PERSON | 默认 alex：第一人称主角 I 的对白固定使用 Alex / Andy_v3.1，人物身份独立保留；可显式指定其他槽位，auto 为按性别推断音色的可选模式 |
 | STORY_PAUSE_MILLIS | 120，各合成块间停顿毫秒数，0～2000 |
 | STORY_SERVER_ADDRESS | 127.0.0.1 |
 | SERVER_PORT | 8080（Spring Boot配置） |
@@ -88,7 +88,7 @@ java -jar .\target\englishpods-0.0.1-SNAPSHOT.jar
 
 ## 角色、音色与提示词
 
-角色身份与音色独立配置，未知角色保留身份并使用 Sam 音色。人物被提及不会自动变成该人物的对白。旁白默认女声，与第一人称角色分别配置。
+角色身份由故事实际人物决定，不限制为六人。故事明确出现 Alex、Ben、Maya、June、Betty 或 Sam 时，同名角色固定使用对应音色；其他角色保留自己的小写身份（例如 `lily`），由大模型结合姓名、代词和人物描述推断性别后分配音色，明确代词与描述优先。男声池为 alex/ben/sam，女性对白池为 maya/june/betty，性别无法推断时才使用 unknown/sam。人物多于音色时允许复用声音，每个人的身份和音色仍保持稳定。人物被提及或被称呼不会自动变成该人物的对白。旁白与第一人称角色分别配置。第一人称主角 I 默认固定使用 alex（Andy_v3.1）；即使故事揭示主角真实姓名或性别，也保留其身份并继续使用该固定音色。该规则优先于同名和性别分配规则。其他角色对白里的 I 不代表故事主角。I said 等叙述文字继续使用 narrator（Beth_v3.1）。
 
 | 角色 | 默认英语音色 | 环境变量覆盖 |
 | --- | --- | --- |
@@ -96,12 +96,17 @@ java -jar .\target\englishpods-0.0.1-SNAPSHOT.jar
 | Ben | Brian_v3.1 | STORY_VOICE_BEN |
 | Maya | Abby_v3.1 | STORY_VOICE_MAYA |
 | June | Annie_v3.1 | STORY_VOICE_JUNE |
-| Sam / 未配置角色 | David_v3.1 | STORY_VOICE_SAM |
-| 旁白 | Emily_v3.1 | STORY_VOICE_NARRATOR |
+| Betty | Betty_v3.1 | STORY_VOICE_BETTY |
+| Sam / 性别未知时回退 | David_v3.1 | STORY_VOICE_SAM |
+| 旁白（独立） | Beth_v3.1 | STORY_VOICE_NARRATOR |
 
-默认映射在 `src/main/resources/voices.properties`。音色必须与所选Qwen模型兼容且支持词时间戳；上述默认值依据官方英语音色列表。若要让旁白和Alex共用声音，可把 STORY_VOICE_NARRATOR 设成与 STORY_VOICE_ALEX 相同。
+默认映射在 `src/main/resources/voices.properties`。音色必须与所选 Qwen 模型兼容且支持词时间戳。Beth_v3.1 只用于旁白，不属于女性对白池；将任何对白槽位覆盖为 Beth 时，就绪检查会报错。
 
-第一轮与第二轮提示词分别在 `src/main/resources/prompts/segment.txt` 和 `review.txt`。修改这些资源后重新构建；修改环境变量覆盖值后重新启动即可。
+第一轮与第二轮提示词分别在 `src/main/resources/prompts/segment.txt` 和 `review.txt`。两轮均返回 `{segments, voiceMap}`，其中 `voiceMap` 形如 `{"lily":{"gender":"female","voiceId":"betty","firstPerson":false}}`。复核请求同时携带原文、上一轮分段和映射；后端校验每个对白角色都有映射、最多一个 firstPerson 主角、普通角色的性别与同名固定音色规则，以及旁白不进入对白映射。firstPerson=true 的主角由服务端强制应用 STORY_FIRST_PERSON 固定音色，再用于实际 TTS 请求；auto 模式保留推断音色。
+
+前端左侧书架、品牌和服务设置均可收起；收起后只保留左上角竖排的展开、新建故事两个图标，并记住展开状态。手机首次访问默认收起。
+
+两轮检查点在 SQLite 的 `initial_segments_json` / `reviewed_segments_json` 中同时保存片段和映射；尝试目录的 `segments-initial.json` / `segments-reviewed.json` 使用相同对象结构（包含 UTF-16 区间），最终 `timeline.json` 及结果 API 也含 `voiceMap`，便于核对。音色提供商 ID 仍由服务端槽位配置解析。修改提示词后重新构建；修改环境变量覆盖值后重新启动即可。
 
 ## 使用流程
 
@@ -109,7 +114,8 @@ java -jar .\target\englishpods-0.0.1-SNAPSHOT.jar
 2. 配置未齐全时故事先保存，补齐后点击“开始生成”。
 3. 页面显示识别角色、复核分角、合成配音、整理音轨的阶段；可以刷新或稍后从书架返回。
 4. 完成后点击播放，绿色标记随单词变化；点击单词跳转、点击句子点读，支持倍速、前后5秒、单句循环和上下句。
-5. 失败任务保留原文和安全错误信息，可重新生成。重试复用有效的分角和复核检查点，从第一个配音块开始合成，可能产生新的 API 费用。
+5. 左上角可收起书架，收起后仅保留展开与新建故事两个图标；选择会在本机浏览器中记住。
+6. 失败任务保留原文和安全错误信息，可重新生成。重试复用有效的分角和复核检查点，从第一个配音块开始合成，可能产生新的 API 费用。
 
 分角和字幕保留完整原文，包括标点和空白。`That's`、`Sam's` 等缩写或所有格按原文显示。对 0 至 9999 的独立整数，如果 Qwen 返回完整等值的英文基数词读法，字幕会保留原数字，并使用首尾朗读词的实际时间。缺词、错误读法和无法校验的时间戳会使该块失败。
 
@@ -134,10 +140,6 @@ Invoke-RestMethod -Method Post -Uri "http://127.0.0.1:8080/api/tasks/$($task.id)
 Invoke-RestMethod -Uri "http://127.0.0.1:8080/api/tasks/$($task.id)"
 ```
 
-## 本地数据与版本控制
-
-首次启动会创建空的 SQLite 数据库和音频目录；仓库不包含现有任务、故事、音频、诊断文件或私有密钥。默认的 `englishpods.db`、`data/`、`.env` 和构建产物均由 `.gitignore` 排除。若通过 `STORY_DB_PATH` 或 `STORY_AUDIO_DIR` 自定义位置，请自行确保该位置不会被 Git 跟踪。
-
 ## 持久化与恢复
 
 SQLite是任务事实来源，单工作线程从数据库领取排队任务，不引入Redis或外部队列。模型HTTP调用和FFmpeg处理不占用数据库事务。任务状态为：
@@ -156,7 +158,7 @@ CREATED → QUEUED → SEGMENTING → REVIEWING → SYNTHESIZING → ASSEMBLING 
 2. 使用新版本后，打开对应尝试的 `data/audio/<任务UUID>/<attempt>/qwen-failure.json` 查看块范围和时间戳数值；自定义 `STORY_AUDIO_DIR` 时使用该目录。旧失败发生时未保存该诊断，更新后不会自动补回。
 3. Spring Boot启动信息和运行日志在启动终端或IDE控制台。默认没有配置文件日志，被任务工作线程捕获的生成错误未必另行打印，排查生成失败应优先查看任务详情和诊断文件。
 
-更新后先停止旧应用，再从配置了环境变量的终端运行新 JAR。已有失败任务由用户在页面点击“重新生成”。系统会创建新尝试目录，并保留旧尝试文件。仅有中间音频、缺少原始词时间戳时无法可靠恢复字幕。
+更新后先停止旧应用，再从配置了环境变量的终端运行新 JAR。已有失败任务由用户在页面点击“重新生成”。系统会创建新尝试目录，并保留旧尝试文件。仅有中间音频、缺少原始词时间戳时无法可靠恢复字幕。故障证据与实际恢复结果见 [Qwen 时间戳排查](docs/qwen-timestamp-failure.md)。
 
 ## 字幕与音频路线
 
@@ -185,4 +187,4 @@ Java测试包括真实SQLite、旧表迁移、状态/重试/恢复、音频Range
 
 播放路径：结果/音频接口 → 原生audio → currentTime驱动的单词高亮和句子循环。
 
-本版面向本机单用户，未实现账号隔离、公开部署、音色克隆或广播剧精修。后续设计见 `docs/implementation-plan.md`。
+本版面向本机单用户，未实现账号隔离、公开部署、音色克隆或广播剧精修。后续设计见 `docs/implementation-plan.md`，原始调研保存在 `原始需求和具体功能实现参考.md`。

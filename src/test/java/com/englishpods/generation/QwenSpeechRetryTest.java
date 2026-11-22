@@ -22,7 +22,7 @@ import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.Mockito.*;
 
 class QwenSpeechRetryTest {
-    private static final String SOURCE = "These cats make gardens in the sun, with a lake beneath home. ";
+    private static final String SOURCE = "There were five circles on the map, with a line between them. ";
     private final ObjectMapper mapper = new ObjectMapper();
     private final List<JsonNode> requests = new CopyOnWriteArrayList<>();
     private final List<String> responses = new ArrayList<>();
@@ -33,7 +33,8 @@ class QwenSpeechRetryTest {
     private ArrayNode raw;
 
     @BeforeEach void setup() throws Exception {
-        // Synthetic timing data exercises a zero-duration word.
+        // This allowlisted fixture is the actual attempt-3 numeric snapshot; restore token text
+        // only from the retained source, never from a supplier response or credential file.
         try (var fixture = getClass().getResourceAsStream("/qwen/zero-duration-failure.json")) {
             raw = (ArrayNode) mapper.readTree(fixture).at("/alignment/timings");
         }
@@ -62,7 +63,7 @@ class QwenSpeechRetryTest {
 
     @AfterEach void close() { server.stop(0); }
 
-    @Test void syntheticSnapshotStillRejectsZeroDurationRealWord() {
+    @Test void actualNumericSnapshotStillRejectsZeroDurationRealWord() {
         var failure = assertThrows(QwenSpeechClient.TimingException.class, () -> QwenSpeechClient.align(SOURCE, raw));
         var diagnostic = mapper.valueToTree(failure.diagnostic());
         assertTrue(failure.zeroDuration());
@@ -79,7 +80,7 @@ class QwenSpeechRetryTest {
         assertEquals(1280, diagnostic.at("/current/end_time").asInt());
     }
 
-    @Test void retriesZeroDurationWithNewSeedAndReturnsOnlySuccessfulAudioAndTiming() throws Exception {
+    @Test void retriesActualZeroDurationWithNewSeedAndReturnsOnlySuccessfulAudioAndTiming() throws Exception {
         responses.add(stream(raw, new byte[]{99, 98, 97}));
         var valid = positiveDuration();
         responses.add(stream(valid, new byte[]{1, 2, 3, 4}));

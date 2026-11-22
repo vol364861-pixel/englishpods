@@ -52,7 +52,7 @@ class StoryGenerationServiceTest {
         base = "http://127.0.0.1:" + server.getAddress().getPort();
         settings = GenerationSettings.from(new MockEnvironment().withProperty("STORY_LLM_PROVIDER", "deepseek").withProperty("DEEPSEEK_ENDPOINT", base + "/deepseek")
                 .withProperty("QWEN_TTS_ENDPOINT", base + "/qwen"), "fake-deepseek", "fake-qwen");
-        deepSeekJson = mapper.writeValueAsString(Map.of("segments", List.of(
+        deepSeekJson = mapper.writeValueAsString(Map.of("voiceMap", Map.of("visitor", Map.of("gender", "unknown", "voiceId", "sam")), "segments", List.of(
                 Map.of("kind", "narration", "speakerId", "narrator", "text", "That's Sam's map. "),
                 Map.of("kind", "dialogue", "speakerId", "visitor", "text", "“Go!”"))));
         try (var output = new ByteArrayOutputStream(); var input = new AudioInputStream(
@@ -165,14 +165,14 @@ class StoryGenerationServiceTest {
         assertFalse(Files.exists(directory.resolve("qwen-failure.json")));
     }
 
-    @Test void repeatedZeroDurationSplitsOriginalChunkAtCommaAndKeepsFrameOffsets() throws Exception {
+    @Test void repeatedActualZeroDurationSplitsOriginalChunkAtCommaAndKeepsFrameOffsets() throws Exception {
         String prefix = "😀 Before. ";
-        String left = "These cats make gardens in the sun, ";
-        String right = "with a lake beneath home. ";
+        String left = "There were five circles on the map, ";
+        String right = "with a line between them. ";
         String chunk = left + right;
         String suffix = "“Go!”";
         story = prefix + chunk + suffix;
-        deepSeekJson = mapper.writeValueAsString(Map.of("segments", List.of(
+        deepSeekJson = mapper.writeValueAsString(Map.of("voiceMap", Map.of("visitor", Map.of("gender", "unknown", "voiceId", "sam")), "segments", List.of(
                 Map.of("kind", "dialogue", "speakerId", "visitor", "text", prefix),
                 Map.of("kind", "narration", "speakerId", "narrator", "text", chunk),
                 Map.of("kind", "dialogue", "speakerId", "visitor", "text", suffix))));
@@ -280,7 +280,7 @@ class StoryGenerationServiceTest {
                 "{\"segments\":[{\"kind\":\"invalid\",\"speakerId\":\"narrator\",\"text\":\"Hello!\"}]}")) {
             assertThrows(GenerationException.class, () -> StorySegmenter.validate("Hello!", mapper.readTree(invalid)));
         }
-        JsonNode split = mapper.valueToTree(Map.of("segments", List.of(
+        JsonNode split = mapper.valueToTree(Map.of("voiceMap", Map.of("visitor", Map.of("gender", "unknown", "voiceId", "sam")), "segments", List.of(
                 Map.of("kind", "dialogue", "speakerId", "ben", "text", "\uD83D"),
                 Map.of("kind", "dialogue", "speakerId", "ben", "text", "\uDE00 Hi"))));
         assertThrows(GenerationException.class, () -> StorySegmenter.validate("😀 Hi", split));
@@ -288,7 +288,7 @@ class StoryGenerationServiceTest {
 
     @Test void utf16EmojiOffsetsAndCurlyContractionsArePreserved() throws Exception {
         story = "😀 That’s Sam’s map.";
-        deepSeekJson = mapper.writeValueAsString(Map.of("segments", List.of(Map.of(
+        deepSeekJson = mapper.writeValueAsString(Map.of("voiceMap", Map.of("visitor", Map.of("gender", "unknown", "voiceId", "sam")), "segments", List.of(Map.of(
                 "kind", "narration", "speakerId", "narrator", "text", story))));
         GenerationResult result = new StoryGenerationService(settings, mapper).generate(story, directory, ignored -> {});
         assertEquals(3, result.words().getFirst().sourceStart());
@@ -406,7 +406,7 @@ class StoryGenerationServiceTest {
 
     @Test void realHttpAndFfmpegAcceptPlaceholderPunctuationInFullStory() throws Exception {
         story = "Hi, Sam!";
-        deepSeekJson = mapper.writeValueAsString(Map.of("segments", List.of(Map.of(
+        deepSeekJson = mapper.writeValueAsString(Map.of("voiceMap", Map.of("visitor", Map.of("gender", "unknown", "voiceId", "sam")), "segments", List.of(Map.of(
                 "kind", "narration", "speakerId", "narrator", "text", story))));
         qwenOverride = event(Map.of("output", Map.of("sentence", Map.of("index", 0,
                 "words", List.of(timing("Hi", 0, 2, 0, 100), timing(",", 0, 0, 0, 0),
@@ -422,7 +422,7 @@ class StoryGenerationServiceTest {
 
     @Test void sseWavFramesAvoidUnavailableSignedUrlAndPassActualFfmpeg() throws Exception {
         story = "Hi!";
-        deepSeekJson = mapper.writeValueAsString(Map.of("segments", List.of(Map.of(
+        deepSeekJson = mapper.writeValueAsString(Map.of("voiceMap", Map.of("visitor", Map.of("gender", "unknown", "voiceId", "sam")), "segments", List.of(Map.of(
                 "kind", "narration", "speakerId", "narrator", "text", story))));
         int split = 1001;
         qwenOverride = event(Map.of("output", Map.of("audio", Map.of("data", java.util.Base64.getEncoder()
@@ -503,7 +503,7 @@ class StoryGenerationServiceTest {
     @Test void legacyReviewedImportSkipsDeepSeekAndRecordsUnknownHistoricalConfiguration() throws Exception {
         var jdbc = checkpointDatabase(); var task = savedTask(jdbc);
         var old = attempt(task, 1); Files.createDirectories(old);
-        mapper.writeValue(old.resolve("segments-initial.json").toFile(), StorySegmenter.validate(story, mapper.readTree(deepSeekJson)));
+        mapper.writeValue(old.resolve("segments-initial.json").toFile(), StorySegmenter.validateCasting(story, mapper.readTree(deepSeekJson)));
         Files.copy(old.resolve("segments-initial.json"), old.resolve("segments-reviewed.json"));
         var stages = new ArrayList<String>();
         new StoryGenerationService(settings, mapper, new SegmentationCheckpointRepository(jdbc))
@@ -517,7 +517,7 @@ class StoryGenerationServiceTest {
         var jdbc = checkpointDatabase(); var task = savedTask(jdbc);
         var older = attempt(task, 1); Files.createDirectories(older);
         var latest = attempt(task, 2); Files.createDirectories(latest);
-        var initial = StorySegmenter.validate(story, mapper.readTree(deepSeekJson));
+        var initial = StorySegmenter.validateCasting(story, mapper.readTree(deepSeekJson));
         mapper.writeValue(older.resolve("segments-reviewed.json").toFile(), initial);
         mapper.writeValue(latest.resolve("segments-initial.json").toFile(), initial);
         Files.writeString(latest.resolve("segments-reviewed.json"), "[{\"kind\":\"dialogue\",\"speakerId\":\"ben\",\"sourceStart\":0,\"sourceEnd\":999999}]");
@@ -540,7 +540,7 @@ class StoryGenerationServiceTest {
         assertEquals(4, deepSeekRequests.size());
         story = story + " ";
         jdbc.update("UPDATE story_tasks SET source_text=?", story);
-        deepSeekJson = mapper.writeValueAsString(Map.of("segments", List.of(Map.of("kind", "narration", "speakerId", "narrator", "text", story))));
+        deepSeekJson = mapper.writeValueAsString(Map.of("voiceMap", Map.of("visitor", Map.of("gender", "unknown", "voiceId", "sam")), "segments", List.of(Map.of("kind", "narration", "speakerId", "narrator", "text", story))));
         assertThrows(GenerationException.class, () -> new StoryGenerationService(settings, mapper, repo)
                 .generate(story, attempt(task, 3), ignored -> {}));
         assertEquals(6, deepSeekRequests.size());
@@ -588,13 +588,103 @@ class StoryGenerationServiceTest {
     @Test void bailianDoesNotImportLegacyDeepSeekArtifactsWithUnknownConfiguration() throws Exception {
         var jdbc = checkpointDatabase(); var task = savedTask(jdbc);
         var old = attempt(task, 1); Files.createDirectories(old);
-        mapper.writeValue(old.resolve("segments-reviewed.json").toFile(), StorySegmenter.validate(story, mapper.readTree(deepSeekJson)));
-        var bailian = GenerationSettings.from(new MockEnvironment()
+        mapper.writeValue(old.resolve("segments-reviewed.json").toFile(), StorySegmenter.validateCasting(story, mapper.readTree(deepSeekJson)));
+        var bailian = GenerationSettings.from(new MockEnvironment().withProperty("STORY_LLM_PROVIDER", "bailian")
                 .withProperty("QWEN_LLM_ENDPOINT", base + "/deepseek")
                 .withProperty("QWEN_TTS_ENDPOINT", base + "/qwen"), null, "fake-qwen");
         qwenStatus = 401;
         assertThrows(GenerationException.class, () -> new StoryGenerationService(bailian, mapper,
                 new SegmentationCheckpointRepository(jdbc)).generate(story, attempt(task, 2), ignored -> {}));
+        assertEquals(2, deepSeekRequests.size());
+        assertEquals("GENERATED", jdbc.queryForObject("SELECT checkpoint_origin FROM story_tasks", String.class));
+    }
+
+    @Test void lilyUsesFemaleVoiceAndNarrationUsesBethAfterCheckpointReload() throws Exception {
+        String prefix = "Lily called me. ";
+        String quote = "\"Hey! Are you busy this weekend?\"";
+        String suffix = " she asked.";
+        story = prefix + quote + suffix;
+        deepSeekJson = mapper.writeValueAsString(Map.of("voiceMap",
+                Map.of("lily", Map.of("gender", "female", "voiceId", "betty")), "segments", List.of(
+                        Map.of("kind", "narration", "speakerId", "narrator", "text", prefix),
+                        Map.of("kind", "dialogue", "speakerId", "lily", "text", quote),
+                        Map.of("kind", "narration", "speakerId", "narrator", "text", suffix))));
+        var jdbc = checkpointDatabase(); var task = savedTask(jdbc);
+        qwenStatus = 401;
+        assertThrows(GenerationException.class, () -> new StoryGenerationService(settings, mapper,
+                new SegmentationCheckpointRepository(jdbc)).generate(story, attempt(task, 1), ignored -> {}));
+        var saved = mapper.readTree(jdbc.queryForObject("SELECT reviewed_segments_json FROM story_tasks", String.class));
+        assertEquals("female", saved.at("/voiceMap/lily/gender").asText());
+        assertEquals("betty", saved.at("/voiceMap/lily/voiceId").asText());
+        qwenStatus = 200; qwenRequests.clear();
+        var result = new StoryGenerationService(settings, mapper,
+                new SegmentationCheckpointRepository(new org.springframework.jdbc.core.JdbcTemplate(dataSource())))
+                .generate(story, attempt(task, 2), ignored -> {});
+        assertEquals(2, deepSeekRequests.size());
+        assertEquals(story, result.text());
+        assertEquals("lily", result.segments().get(1).speakerId());
+        assertEquals("betty", result.voiceMap().get("lily").voiceId());
+        assertTrue(qwenRequests.stream().anyMatch(r -> r.at("/input/text").asText().contains("weekend")));
+        for (var request : qwenRequests) {
+            String source = request.at("/input/text").asText();
+            String expected = source.contains("Lily") || source.contains("she asked") ? "Beth_v3.1" : "Betty_v3.1";
+            assertEquals(expected, request.at("/input/voice").asText(), source);
+        }
+        var timeline = mapper.readTree(attempt(task, 2).resolve("timeline.json").toFile());
+        assertEquals("betty", timeline.at("/voiceMap/lily/voiceId").asText());
+    }
+
+    @Test void firstPersonFixedVoiceSurvivesSqliteReloadAndReachesRealHttpTts() throws Exception {
+        story = "I smiled. “Hello!” I said.";
+        deepSeekJson = mapper.writeValueAsString(Map.of("voiceMap",
+                Map.of("lily", Map.of("gender", "female", "voiceId", "betty", "firstPerson", true)),
+                "segments", List.of(
+                        Map.of("kind", "narration", "speakerId", "narrator", "text", "I smiled. "),
+                        Map.of("kind", "dialogue", "speakerId", "lily", "text", "“Hello!”"),
+                        Map.of("kind", "narration", "speakerId", "narrator", "text", " I said."))));
+        var jdbc = checkpointDatabase(); var task = savedTask(jdbc);
+        qwenStatus = 401;
+        assertThrows(GenerationException.class, () -> new StoryGenerationService(settings, mapper,
+                new SegmentationCheckpointRepository(jdbc)).generate(story, attempt(task, 1), ignored -> {}));
+        var saved = mapper.readTree(jdbc.queryForObject("SELECT reviewed_segments_json FROM story_tasks", String.class));
+        assertTrue(saved.at("/voiceMap/lily/firstPerson").asBoolean());
+        assertEquals("alex", saved.at("/voiceMap/lily/voiceId").asText());
+        qwenStatus = 200; qwenRequests.clear();
+        var result = new StoryGenerationService(settings, mapper,
+                new SegmentationCheckpointRepository(new org.springframework.jdbc.core.JdbcTemplate(dataSource())))
+                .generate(story, attempt(task, 2), ignored -> {});
+        assertEquals(2, deepSeekRequests.size());
+        assertEquals(story, result.text());
+        assertEquals(new StoryCasting.CharacterVoice("female", "alex", true), result.voiceMap().get("lily"));
+        assertEquals("lily", result.segments().get(1).speakerId());
+        assertTrue(qwenRequests.stream().anyMatch(r -> r.at("/input/text").asText().contains("Hello")));
+        for (var request : qwenRequests) {
+            String text = request.at("/input/text").asText();
+            assertEquals(text.contains("Hello") ? "Andy_v3.1" : "Beth_v3.1", request.at("/input/voice").asText());
+        }
+        var timeline = mapper.readTree(attempt(task, 2).resolve("timeline.json").toFile());
+        assertTrue(timeline.at("/voiceMap/lily/firstPerson").asBoolean());
+    }
+
+    @Test void preVoiceMapCheckpointFilesCannotSilentlyRestoreSamFallback() throws Exception {
+        var jdbc = checkpointDatabase(); var task = savedTask(jdbc);
+        var old = attempt(task, 1); Files.createDirectories(old);
+        // This is the actual old file format: source ranges with no voiceMap.
+        mapper.writeValue(old.resolve("segments-reviewed.json").toFile(), StorySegmenter.validate(story, mapper.readTree(deepSeekJson)));
+        new StoryGenerationService(settings, mapper, new SegmentationCheckpointRepository(jdbc))
+                .generate(story, attempt(task, 2), ignored -> {});
+        assertEquals(2, deepSeekRequests.size());
+        assertEquals("GENERATED", jdbc.queryForObject("SELECT checkpoint_origin FROM story_tasks", String.class));
+    }
+
+    @Test void preFirstPersonCheckpointCannotRestoreAnInferredProtagonistVoice() throws Exception {
+        var jdbc = checkpointDatabase(); var task = savedTask(jdbc);
+        var old = attempt(task, 1); Files.createDirectories(old);
+        ObjectNode legacy = mapper.valueToTree(StorySegmenter.validateCasting(story, mapper.readTree(deepSeekJson)));
+        for (var voice : legacy.path("voiceMap")) ((ObjectNode) voice).remove("firstPerson");
+        mapper.writeValue(old.resolve("segments-reviewed.json").toFile(), legacy);
+        new StoryGenerationService(settings, mapper, new SegmentationCheckpointRepository(jdbc))
+                .generate(story, attempt(task, 2), ignored -> {});
         assertEquals(2, deepSeekRequests.size());
         assertEquals("GENERATED", jdbc.queryForObject("SELECT checkpoint_origin FROM story_tasks", String.class));
     }

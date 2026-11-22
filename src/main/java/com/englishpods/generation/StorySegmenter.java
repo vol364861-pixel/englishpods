@@ -18,7 +18,7 @@ final class StorySegmenter {
         this.settings = settings; this.mapper = mapper; this.http = http;
     }
 
-    List<StorySegment> segment(String text, List<StorySegment> previous) {
+    StoryCasting segment(String text, StoryCasting previous) {
         try {
             String prompt;
             try (var stream = getClass().getResourceAsStream(previous == null ? "/prompts/segment.txt" : "/prompts/review.txt")) {
@@ -27,7 +27,8 @@ final class StorySegmenter {
                         .replace("{{FIRST_PERSON}}", settings.firstPersonSpeaker());
             }
             Object input = previous == null ? Map.of("story", text) : Map.of("story", text,
-                    "previousSegments", previous.stream().map(s -> Map.of("kind", s.kind(), "speakerId", s.speakerId(),
+                    "previousVoiceMap", previous.voiceMap(),
+                    "previousSegments", previous.segments().stream().map(s -> Map.of("kind", s.kind(), "speakerId", s.speakerId(),
                             "text", text.substring(s.sourceStart(), s.sourceEnd()))).toList());
             Map<String, Object> request = new LinkedHashMap<>(Map.of("model", settings.llmModel(), "temperature", 0,
                     "max_tokens", 16384, "response_format", Map.of("type", "json_object"), "messages", List.of(
@@ -41,9 +42,54 @@ final class StorySegmenter {
             if (!"stop".equals(choice.path("finish_reason").asText()))
                 throw new GenerationException(settings.llmName() + " 分角结果不完整，请缩短故事或重试");
             String json = choice.path("message").path("content").asText("");
-            return validate(text, mapper.readTree(json));
+            return validateCasting(text, mapper.readTree(json), settings.firstPersonSpeaker());
         } catch (GenerationException e) { throw e; }
         catch (Exception e) { throw new GenerationException(settings.llmName() + " 分角响应格式无效，请重试"); }
+    }
+
+    static StoryCasting validateCasting(String text, JsonNode response) {
+        return validateCasting(text, response, "alex");
+    }
+
+    static StoryCasting validateCasting(String text, JsonNode response, String firstPersonSlot) {
+        List<StorySegment> segments = validate(text, response);
+        JsonNode mapping = response.get("voiceMap");
+        if (mapping == null || !mapping.isObject() || mapping.size() > 10000)
+            throw new GenerationException("分角结果缺少有效的 voiceMap 角色音色映射");
+        Map<String, StoryCasting.CharacterVoice> voices = new LinkedHashMap<>();
+        mapping.properties().forEach(entry -> {
+            String speaker = entry.getKey().trim().toLowerCase(Locale.ROOT);
+            String gender = entry.getValue().path("gender").asText("");
+            String voice = entry.getValue().path("voiceId").asText("");
+            JsonNode firstPersonNode = entry.getValue().get("firstPerson");
+            if (firstPersonNode != null && !firstPersonNode.isBoolean())
+                throw new GenerationException("角色 firstPerson 必须是布尔值");
+            boolean firstPerson = firstPersonNode != null && firstPersonNode.asBoolean();
+            boolean fixedFirstPerson = firstPerson && !"auto".equals(firstPersonSlot);
+            // The protagonist keeps their actual identity and gender, but uses the configured fixed voice.
+            if (fixedFirstPerson) voice = firstPersonSlot;
+            List<String> allowed = switch (gender) {
+                case "male" -> List.of("alex", "ben", "sam");
+                case "female" -> List.of("maya", "june", "betty");
+                case "unknown" -> List.of("sam");
+                default -> List.of();
+            };
+            if (speaker.isEmpty() || speaker.length() > 80 || speaker.equals("narrator")
+                    || speaker.codePoints().anyMatch(Character::isISOControl)
+                    || allowed.isEmpty() || (!fixedFirstPerson && !allowed.contains(voice)) || voices.containsKey(speaker))
+                throw new GenerationException("角色性别与音色映射无效：男声 alex/ben/sam，女声 maya/june/betty，未知性别 sam；旁白独立");
+            if (!fixedFirstPerson && List.of("alex", "ben", "sam", "maya", "june", "betty").contains(speaker) && !speaker.equals(voice))
+                throw new GenerationException("故事中的同名角色必须使用对应固定音色");
+            voices.put(speaker, new StoryCasting.CharacterVoice(gender, voice, firstPerson));
+        });
+        if (voices.values().stream().filter(StoryCasting.CharacterVoice::firstPerson).count() > 1)
+            throw new GenerationException("故事只能有一个第一人称主角");
+        for (StorySegment segment : segments) {
+            if (segment.kind().equals("dialogue") && (segment.speakerId().equals("narrator")
+                    || !voices.containsKey(segment.speakerId())))
+                throw new GenerationException("对白角色缺少独立音色映射，请重新分角");
+        }
+        return new StoryCasting(segments, Map.copyOf(voices));
     }
 
     static List<StorySegment> validate(String text, JsonNode response) {

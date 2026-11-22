@@ -1,6 +1,8 @@
 import { findActiveIndex, loopSeekTime, clampTime, formatTime, sourceParts } from './timeline.mjs';
 
 import { checkpointDescription } from './task-progress.mjs';
+import { bindSidebar } from './sidebar.mjs';
+import { bindListening } from './listening-view.mjs';
 
 const $ = (id) => document.getElementById(id);
 const audio = $('audio');
@@ -19,6 +21,10 @@ let readiness = null;
 let selected = null;
 let result = null;
 let history = [];
+let searchResults = [];
+let historyRequest = null;
+let searchTimer = null;
+let deletionTarget = null;
 let selectionVersion = 0;
 let selectionRequest = null;
 let pollTimer = null;
@@ -36,10 +42,29 @@ let playbackVersion = 0;
 function stored(key) { try { return localStorage.getItem(key); } catch { return null; } }
 function remember(key, value) { try { value == null ? localStorage.removeItem(key) : localStorage.setItem(key, value); } catch { /* Browser storage may be disabled. */ } }
 
+const sidebar = bindSidebar({
+  root: document.body,
+  content: $('sidebar-content'),
+  toggle: $('toggle-sidebar'),
+  backdrop: $('sidebar-backdrop'),
+  background: [document.querySelector('main'), $('player')],
+  narrowScreen: window.matchMedia('(max-width: 760px)'),
+  read: stored,
+  write: remember
+});
+
+const listening = bindListening({
+  audio, timer: $('listening-timer'), value: $('listening-timer-value'), panel: $('listening-board'),
+  canvas: $('listening-chart'), range: $('listening-week-range'), total: $('listening-week-total'),
+  days: $('listening-days'), previous: $('previous-listening-week'), next: $('next-listening-week'),
+  message: $('listening-board-message')
+});
+
 async function api(path, options = {}) {
   let response;
   try { response = await fetch(path, { ...options, headers: { ...(options.body ? { 'Content-Type': 'application/json' } : {}), ...options.headers } }); }
   catch (error) { if (error.name === 'AbortError') throw error; throw new Error('无法连接服务器，请确认应用正在运行，然后重试。'); }
+  if (response.status === 204) return null;
   let body;
   try { body = await response.json(); } catch { throw new Error(`服务器返回了无法读取的响应（HTTP ${response.status}）。`); }
   if (!response.ok) {
@@ -64,6 +89,7 @@ function setPending(pending) {
   $('new-story').disabled = pending;
   $('load-example').disabled = pending;
   $('submit-story').textContent = pending ? '正在保存…' : '保存并生成 →';
+  renderHistory();
 }
 
 async function refreshConfig(reportFailure = false) {
@@ -76,7 +102,9 @@ async function refreshConfig(reportFailure = false) {
       const node = document.createElement('li'); node.textContent = issue; return node;
     }));
     const voices = Object.entries(readiness.voices || {}).map(([speaker, voice]) => `${speaker}: ${voice}`).join(' · ');
-    $('config-voices').textContent = voices ? `角色音色：${voices}。第一人称：${readiness.firstPersonSpeaker || 'alex'}。` : '';
+    const slot = readiness.firstPersonSpeaker || 'alex';
+    const firstPerson = slot === 'auto' ? '按故事自动识别' : `${slot} → ${readiness.voices?.[slot] || slot}（固定音色）`;
+    $('config-voices').textContent = voices ? `第一人称 I：${firstPerson}。可用音色：${voices}。` : '';
     return readiness;
   } catch (error) {
     readiness = null;
@@ -90,9 +118,14 @@ async function refreshConfig(reportFailure = false) {
 }
 
 function renderHistory() {
-  $('history-message').hidden = history.length > 0;
-  $('history-message').textContent = '书架还是空的，写下你的第一个故事吧。';
-  $('history').replaceChildren(...history.map((task) => {
+  const query = $('search-stories').value.trim();
+  const tasks = query ? searchResults : history;
+  const message = $('history-message');
+  message.hidden = tasks.length > 0 && !(query && tasks.length === 30);
+  message.textContent = query
+    ? tasks.length ? '显示最近 30 条匹配结果。' : '没有找到匹配的故事。'
+    : '书架还是空的，写下你的第一个故事吧。';
+  $('history').replaceChildren(...tasks.map((task) => {
     const button = document.createElement('button');
     button.type = 'button'; button.className = 'history-item';
     button.classList.toggle('active', task.id === selected?.id);
@@ -104,38 +137,91 @@ function renderHistory() {
     date.textContent = Number.isNaN(parsed.getTime()) ? '' : new Intl.DateTimeFormat('zh-CN', { month: '2-digit', day: '2-digit' }).format(parsed);
     const status = document.createElement('span'); status.textContent = labels[task.status] || task.status;
     meta.append(date, status); button.append(title, meta);
-    button.addEventListener('click', () => { if (!mutationPending) selectTask(task.id); });
-    return button;
+    button.addEventListener('click', () => {
+      if (mutationPending) return;
+      const closedDrawer = sidebar.dismissDrawer();
+      selectTask(task.id);
+      if (closedDrawer) $('task-title').focus();
+    });
+    const remove = document.createElement('button');
+    remove.type = 'button';
+    remove.className = 'history-delete';
+    remove.setAttribute('aria-label', `删除故事 ${task.title}`);
+    const running = stages.slice(1).includes(task.status);
+    remove.title = running ? '生成结束后可删除' : '删除故事';
+    remove.disabled = mutationPending || running;
+    remove.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 7h16M9 7V4h6v3m3 0-1 13H7L6 7m4 4v5m4-5v5"/></svg>';
+    remove.addEventListener('click', () => confirmDeletion(task));
+    const row = document.createElement('div');
+    row.className = 'history-row';
+    row.append(button, remove);
+    return row;
   }));
 }
 
 async function refreshHistory(reportFailure = false) {
+  clearTimeout(searchTimer);
+  historyRequest?.abort();
+  const request = new AbortController();
+  historyRequest = request;
+  const query = $('search-stories').value.trim();
   $('refresh-history').disabled = true;
   try {
-    const loaded = await api('/api/tasks');
+    const loaded = await api(query ? `/api/tasks?q=${encodeURIComponent(query)}` : '/api/tasks', { signal: request.signal });
+    if (request.signal.aborted) return;
     if (!Array.isArray(loaded)) throw new Error('故事列表格式错误，请刷新重试。');
-    history = loaded;
     // Keep the newest selected snapshot if an earlier list request finishes late.
     if (selected) {
-      const index = history.findIndex((task) => task.id === selected.id);
-      if (index >= 0) history[index] = selected;
-      else history.unshift(selected);
-      history = history.slice(0, 30);
+      const index = loaded.findIndex((task) => task.id === selected.id);
+      if (index >= 0 && selected.updatedAt > loaded[index].updatedAt) loaded[index] = selected;
     }
+    if (query) searchResults = loaded;
+    else history = loaded;
     renderHistory();
   } catch (error) {
-    if (!history.length) { $('history-message').hidden = false; $('history-message').textContent = '暂时无法打开书架，请点击刷新。'; }
+    if (request.signal.aborted) return;
+    $('history-message').hidden = false;
+    $('history-message').textContent = '暂时无法打开书架，请点击刷新。';
     if (reportFailure) notify(error.message, true);
-  } finally { $('refresh-history').disabled = false; }
+  } finally { if (historyRequest === request) $('refresh-history').disabled = false; }
 }
 
 function updateHistory(task) {
   const index = history.findIndex((item) => item.id === task.id);
   if (index >= 0) history[index] = task;
-  else history.unshift(task);
-  history = history.slice(0, 30);
+  searchResults = searchResults.map((item) => item.id === task.id ? task : item);
   renderHistory();
 }
+
+function confirmDeletion(task) {
+  const dialog = $('story-delete-dialog');
+  deletionTarget = task;
+  dialog.returnValue = '';
+  $('story-delete-description').textContent = `将永久删除《${task.title}》的原文、分角结果和生成音频。已累计的收听时长会保留。`;
+  dialog.showModal();
+}
+
+$('story-delete-dialog').addEventListener('close', async (event) => {
+  const task = deletionTarget;
+  deletionTarget = null;
+  if (event.target.returnValue !== 'delete' || !task || mutationPending) return;
+  const wasSelected = selected?.id === task.id;
+  setPending(true);
+  if (wasSelected) { stopSelection(); resetPlayer(); }
+  try {
+    const response = await api(`/api/tasks/${encodeURIComponent(task.id)}`, { method: 'DELETE' });
+    forgetStory(task.id);
+    notify(response?.cleanupPending ? '故事已删除，音频文件将在可用时自动清理。' : '故事及生成数据已删除。');
+  } catch (error) {
+    if (error.status === 404) forgetStory(task.id);
+    else if (wasSelected) await selectTask(task.id);
+    notify(error.status === 409 ? '正在生成的故事要等生成结束后才能删除。' : error.message, true);
+  } finally {
+    await refreshHistory();
+    setPending(false);
+    if (!$('sidebar-content').hidden) $('search-stories').focus();
+  }
+});
 
 function stopSelection() {
   selectionVersion++;
@@ -148,6 +234,7 @@ function stopSelection() {
 
 function resetPlayer() {
   playbackVersion++;
+  listening.stop();
   audio.pause();
   audio.removeAttribute('src');
   audio.load();
@@ -164,8 +251,15 @@ function resetPlayer() {
   $('result-loading').hidden = true;
 }
 
+function forgetStory(id) {
+  history = history.filter((task) => task.id !== id);
+  searchResults = searchResults.filter((task) => task.id !== id);
+  if (selected?.id === id) showComposer();
+  else renderHistory();
+}
+
 function showComposer() {
-  if (mutationPending) return;
+  sidebar.dismissDrawer();
   stopSelection(); resetPlayer(); selected = null;
   remember('englishpods.selected', null);
   $('composer').hidden = false;
@@ -227,7 +321,11 @@ async function selectTask(id, task = null) {
   } catch (error) {
     if (version !== selectionVersion || error.name === 'AbortError') return;
     notify(error.message, true);
-    if (error.status === 404) { remember('englishpods.selected', null); selected = null; $('task-panel').hidden = true; $('composer').hidden = false; renderHistory(); }
+    if (error.status === 404) {
+      remember('englishpods.selected', null);
+      forgetStory(id);
+      notify(error.message, true);
+    }
   }
 }
 
@@ -271,7 +369,11 @@ async function continueTask(version) {
 async function requestGeneration(id) {
   const config = await refreshConfig();
   if (!config?.ready) {
-    $('configuration').open = true;
+    sidebar.expand();
+    const configuration = $('configuration');
+    configuration.open = true;
+    configuration.querySelector('summary').focus({ preventScroll: true });
+    configuration.scrollIntoView({ block: 'nearest' });
     notify(config ? '故事已保存。生成服务尚未配置完成，请根据服务详情设置服务器环境变量，再点击“开始生成”。' : '故事已保存。暂时无法确认生成服务状态，请重新检查服务后再生成。');
     return;
   }
@@ -291,10 +393,12 @@ $('story-form').addEventListener('submit', async (event) => {
   setPending(true); notify('');
   try {
     const task = await api('/api/tasks', { method: 'POST', body: JSON.stringify({ title, text }) });
+    history = [task, ...history].slice(0, 30);
     $('story-title').value = '';
     $('story-text').value = '';
     updateCount();
     await selectTask(task.id, task);
+    if ($('search-stories').value.trim()) refreshHistory();
     await requestGeneration(task.id);
   } catch (error) { notify(error.message, true); }
   finally { setPending(false); }
@@ -399,7 +503,13 @@ function synchronize() {
 function enforceLoop(playing = !audio.paused && !audio.ended) {
   if (!result || !loopEnabled) return;
   const target = loopSeekTime(result.sentences[selectedSentence], audio.currentTime, playing);
-  if (target !== null) audio.currentTime = target;
+  if (target !== null) jumpAudio(target);
+}
+
+function jumpAudio(target) {
+  if (target === audio.currentTime) return;
+  listening.beforeSeek();
+  audio.currentTime = target;
 }
 
 function tick() {
@@ -412,7 +522,7 @@ function startFrames() { if (frame === null) frame = requestAnimationFrame(tick)
 
 function seek(time) {
   if (!result) return;
-  audio.currentTime = clampTime(time, result.duration);
+  jumpAudio(clampTime(time, result.duration));
   synchronize();
 }
 
@@ -461,6 +571,7 @@ for (const event of ['timeupdate', 'seeked', 'seeking', 'ratechange', 'loadedmet
 
 document.addEventListener('keydown', (event) => {
   if (!result || event.defaultPrevented || event.altKey || event.ctrlKey || event.metaKey) return;
+  if ($('listening-board').open || $('story-delete-dialog').open) return;
   const target = event.target;
   if (target.closest('input, textarea, select, button, a, [contenteditable="true"], [role="button"], .sentence')) return;
   if (event.code === 'Space') { event.preventDefault(); audio.paused ? play() : audio.pause(); }
@@ -468,8 +579,25 @@ document.addEventListener('keydown', (event) => {
   else if (event.key === 'ArrowRight') { event.preventDefault(); seek(audio.currentTime + 5); }
 });
 
-$('new-story').addEventListener('click', showComposer);
+$('new-story').addEventListener('click', () => { if (!mutationPending) showComposer(); });
 $('refresh-history').addEventListener('click', () => refreshHistory(true));
+$('search-stories').addEventListener('input', () => {
+  historyRequest?.abort();
+  clearTimeout(searchTimer);
+  searchResults = [];
+  renderHistory();
+  if ($('search-stories').value.trim()) {
+    $('history-message').textContent = '正在搜索…';
+    searchTimer = setTimeout(() => refreshHistory(), 180);
+  } else refreshHistory();
+});
+$('open-listening-board').addEventListener('click', () => {
+  const closedDrawer = sidebar.dismissDrawer();
+  if (closedDrawer) {
+    $('listening-board').addEventListener('close', () => $('toggle-sidebar').focus(), { once: true });
+  }
+  listening.open();
+});
 $('refresh-config').addEventListener('click', () => refreshConfig(true));
 $('load-example').addEventListener('click', () => {
   $('story-title').value = 'Back to Sam’s Bookstore'; $('story-text').value = example;

@@ -27,7 +27,7 @@ record GenerationSettings(String deepSeekKey, String qwenKey, String deepSeekEnd
             throw new IllegalStateException("Unable to load voice configuration");
         }
         Map<String,String> voices = new LinkedHashMap<>();
-        for (String role : List.of("alex", "ben", "maya", "june", "sam", "narrator")) {
+        for (String role : List.of("alex", "ben", "maya", "june", "betty", "sam", "narrator")) {
             voices.put(role, env.getProperty("STORY_VOICE_" + role.toUpperCase(Locale.ROOT), defaults.getProperty(role)).trim());
         }
         return new GenerationSettings(deepSeekKey, qwenKey,
@@ -38,7 +38,7 @@ record GenerationSettings(String deepSeekKey, String qwenKey, String deepSeekEnd
                 env.getProperty("FFMPEG_PATH", "ffmpeg"), Map.copyOf(voices),
                 env.getProperty("STORY_FIRST_PERSON", "alex").trim().toLowerCase(Locale.ROOT),
                 pause(env.getProperty("STORY_PAUSE_MILLIS", "120")),
-                env.getProperty("STORY_LLM_PROVIDER", "bailian").trim().toLowerCase(Locale.ROOT),
+                env.getProperty("STORY_LLM_PROVIDER", "deepseek").trim().toLowerCase(Locale.ROOT),
                 env.getProperty("QWEN_LLM_ENDPOINT", ""),
                 env.getProperty("QWEN_LLM_MODEL", "qwen3.8-max"));
     }
@@ -66,7 +66,10 @@ record GenerationSettings(String deepSeekKey, String qwenKey, String deepSeekEnd
         if (!endpointValid(qwenEndpoint)) issues.add("请配置 QWEN_TTS_ENDPOINT 为所用地域和工作空间的 HTTPS 完整接口地址");
         if (llmModel().isBlank() || qwenModel.isBlank()) issues.add("模型名称不能为空");
         if (voices.values().stream().anyMatch(String::isBlank)) issues.add("角色音色配置不能为空");
-        if (!voices.containsKey(firstPersonSpeaker)) issues.add("STORY_FIRST_PERSON 必须是 alex/ben/maya/june/sam/narrator");
+        if (voices.entrySet().stream().anyMatch(e -> !e.getKey().equals("narrator") && "Beth_v3.1".equals(e.getValue())))
+            issues.add("Beth_v3.1 仅用于旁白，请为对白选择其他音色");
+        if (!List.of("auto", "alex", "ben", "maya", "june", "betty", "sam").contains(firstPersonSpeaker))
+            issues.add("STORY_FIRST_PERSON 必须是 auto/alex/ben/maya/june/betty/sam，旁白与对白独立");
         Process process = null;
         try {
             process = new ProcessBuilder(ffmpeg, "-version").redirectOutput(ProcessBuilder.Redirect.DISCARD)

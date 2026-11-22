@@ -73,7 +73,7 @@ class MvpEndToEndTest {
                     body = "secret-provider-body-must-never-reach-client".getBytes(StandardCharsets.UTF_8);
                 } else {
                     status = 200;
-                    String content = json.writeValueAsString(Map.of("segments", List.of(Map.of(
+                    String content = json.writeValueAsString(Map.of("voiceMap", Map.of(), "segments", List.of(Map.of(
                             "kind", "narration", "speakerId", "narrator", "text", "Hello world."))));
                     body = json.writeValueAsBytes(Map.of("choices", List.of(Map.of(
                             "finish_reason", "stop", "message", Map.of("content", content)))));
@@ -128,7 +128,7 @@ class MvpEndToEndTest {
             return new StoryGenerationService(new GenerationSettings("test-only-deepseek", "test-only-qwen",
                     base() + "/deepseek", "deepseek-flash", base() + "/qwen", "qwen-audio-3.1-tts-flash", "ffmpeg",
                     Map.of("alex", "Andy_v3.1", "ben", "Brian_v3.1", "maya", "Abby_v3.1",
-                            "june", "Annie_v3.1", "sam", "David_v3.1", "narrator", "Emily_v3.1"), "alex", 120,
+                            "june", "Annie_v3.1", "sam", "David_v3.1", "narrator", "Beth_v3.1", "betty", "Betty_v3.1"), "alex", 120,
                     "deepseek", "", "qwen3.8-max"), mapper, checkpoints);
         }
     }

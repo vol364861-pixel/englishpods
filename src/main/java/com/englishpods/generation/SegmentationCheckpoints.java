@@ -18,20 +18,22 @@ final class SegmentationCheckpoints {
     private final UUID task;
     private final String sourceHash;
     private final String configHash;
+    private final String firstPersonSlot;
     private String initialJson;
     private String origin = "GENERATED";
-    private List<StorySegment> initial;
-    private List<StorySegment> reviewed;
+    private StoryCasting initial;
+    private StoryCasting reviewed;
 
     SegmentationCheckpoints(SegmentationCheckpointRepository repository, ObjectMapper mapper,
                             GenerationSettings settings, String text, Path directory) throws Exception {
         this.repository = repository; this.mapper = mapper;
+        firstPersonSlot = settings.firstPersonSpeaker();
         task = UUID.fromString(directory.getParent().getFileName().toString());
         int attempt = Integer.parseInt(directory.getFileName().toString());
         if (attempt < 1) throw new IllegalArgumentException("Invalid attempt");
         sourceHash = hash(text);
         String prompts = resource("/prompts/segment.txt") + resource("/prompts/review.txt");
-        configHash = hash(mapper.writeValueAsString(List.of("segment-schema-v2", settings.llmProvider(), settings.llmEndpoint(),
+        configHash = hash(mapper.writeValueAsString(List.of("segment-schema-v4-first-person", settings.llmProvider(), settings.llmEndpoint(),
                 settings.llmModel(), settings.firstPersonSpeaker(), prompts)));
         var saved = repository.find(task, text).orElseThrow();
         if (sourceHash.equals(saved.sourceHash()) && configHash.equals(saved.configHash())) {
@@ -49,7 +51,7 @@ final class SegmentationCheckpoints {
         }
         boolean legacy = saved.sourceHash() == null && saved.configHash() == null;
         repository.reset(task, sourceHash, configHash, mapper.writeValueAsString(Map.of(
-                "schemaVersion", 2, "provider", settings.llmProvider(), "model", settings.llmModel(),
+                "schemaVersion", 4, "provider", settings.llmProvider(), "model", settings.llmModel(),
                 "firstPerson", settings.firstPersonSpeaker(), "promptHash", hash(prompts),
                 "endpointHash", hash(settings.llmEndpoint()))));
         // A new fingerprint never falls back to stale files. Only pre-checkpoint installations import legacy artifacts.
@@ -57,8 +59,8 @@ final class SegmentationCheckpoints {
             for (int previous = attempt - 1; previous >= 1; previous--) {
                 Path old = directory.getParent().resolve(Integer.toString(previous));
                 if (Files.isSymbolicLink(old)) continue;
-                List<StorySegment> oldInitial = readLegacy(text, old.resolve("segments-initial.json"));
-                List<StorySegment> oldReviewed = readLegacy(text, old.resolve("segments-reviewed.json"));
+                StoryCasting oldInitial = readLegacy(text, old.resolve("segments-initial.json"));
+                StoryCasting oldReviewed = readLegacy(text, old.resolve("segments-reviewed.json"));
                 if (oldInitial == null && oldReviewed == null) continue;
                 initial = oldInitial; reviewed = oldReviewed;
                 initialJson = initial == null ? null : mapper.writeValueAsString(initial);
@@ -71,30 +73,36 @@ final class SegmentationCheckpoints {
         }
     }
 
-    List<StorySegment> initial() { return initial; }
-    List<StorySegment> reviewed() { return reviewed; }
-    void saveInitial(List<StorySegment> value) throws Exception {
+    StoryCasting initial() { return initial; }
+    StoryCasting reviewed() { return reviewed; }
+    void saveInitial(StoryCasting value) throws Exception {
         initialJson = mapper.writeValueAsString(value);
         repository.save(task, sourceHash, configHash, initialJson, null, "GENERATED");
         origin = "GENERATED";
     }
-    void saveReviewed(List<StorySegment> value) throws Exception {
+    void saveReviewed(StoryCasting value) throws Exception {
         repository.save(task, sourceHash, configHash, initialJson, mapper.writeValueAsString(value), origin);
     }
 
-    private List<StorySegment> readLegacy(String text, Path path) {
+    private StoryCasting readLegacy(String text, Path path) {
         try {
             if (!Files.isRegularFile(path, LinkOption.NOFOLLOW_LINKS) || Files.size(path) > 4 * 1024 * 1024) return null;
             return validate(text, Files.readString(path));
         } catch (Exception ignored) { return null; }
     }
-    private List<StorySegment> safeValidate(String text, String json) {
+    private StoryCasting safeValidate(String text, String json) {
         try { return validate(text, json); } catch (Exception ignored) { return null; }
     }
-    private List<StorySegment> validate(String text, String json) throws Exception {
+    private StoryCasting validate(String text, String json) throws Exception {
         if (json == null) return null;
         if (json.length() > 4 * 1024 * 1024) throw new IllegalArgumentException("Checkpoint too large");
-        var node = mapper.readTree(json);
+        var root = mapper.readTree(json);
+        // Older casts cannot establish whether the former inferred voice belonged to the protagonist.
+        if (!root.path("voiceMap").isObject()) throw new IllegalArgumentException("Invalid checkpoint voice map");
+        for (var voice : root.path("voiceMap")) {
+            if (!voice.path("firstPerson").isBoolean()) throw new IllegalArgumentException("Outdated checkpoint voice map");
+        }
+        var node = root.path("segments");
         if (!node.isArray() || node.isEmpty() || node.size() > 10000) throw new IllegalArgumentException("Invalid checkpoint");
         var pieces = mapper.createArrayNode();
         int cursor = 0;
@@ -108,7 +116,8 @@ final class SegmentationCheckpoints {
             cursor = end.asInt();
         }
         var wrapper = mapper.createObjectNode(); wrapper.set("segments", pieces);
-        return StorySegmenter.validate(text, wrapper);
+        wrapper.set("voiceMap", root.path("voiceMap"));
+        return StorySegmenter.validateCasting(text, wrapper, firstPersonSlot);
     }
     private static String resource(String name) throws Exception {
         try (var input = SegmentationCheckpoints.class.getResourceAsStream(name)) {
