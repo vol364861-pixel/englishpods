@@ -36,13 +36,14 @@ class StoryCastingTest {
                 .allMatch(chunk -> !chunk.voice().equals("Beth_v3.1")));
     }
 
-    @Test void explicitlyNamedVoiceCharactersCannotBeRemappedToAnotherSlot() throws Exception {
+    @Test void explicitlyNamedVoiceCharactersKeepTheirFixedSlotWhenTheModelSuggestsAnother() throws Exception {
         var output = mapper.readTree("""
-                {"segments":[{"kind":"dialogue","speakerId":"maya","text":"Hello!"}],
-                 "voiceMap":{"maya":{"gender":"female","voiceId":"june"}}}
+                {"segments":[{"kind":"dialogue","speakerId":"june","text":"Hello!"}],
+                 "voiceMap":{"june":{"gender":"female","voiceId":"betty"}}}
                 """);
-        assertTrue(assertThrows(GenerationException.class,
-                () -> StorySegmenter.validateCasting("Hello!", output)).getMessage().contains("固定音色"));
+        var casting = StorySegmenter.validateCasting("Hello!", output);
+        assertEquals("june", casting.segments().getFirst().speakerId());
+        assertEquals(new StoryCasting.CharacterVoice("female", "june"), casting.voiceMap().get("june"));
     }
 
     @Test void firstPersonUsesFixedAlexVoiceWhileKeepingIdentityGenderAndNarrator() throws Exception {

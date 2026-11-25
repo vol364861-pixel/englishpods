@@ -3,9 +3,54 @@ import { findActiveIndex, loopSeekTime, clampTime, formatTime, sourceParts } fro
 import { checkpointDescription } from './task-progress.mjs';
 import { bindSidebar } from './sidebar.mjs';
 import { bindListening } from './listening-view.mjs';
+import { bindReaderFollow, paragraphStartWords } from './reader-follow.mjs';
 
 const $ = (id) => document.getElementById(id);
 const audio = $('audio');
+// ================================
+// 每日吉祥物：根据北京时间自动切换
+// ================================
+
+const timerMascot = $('timer-mascot');
+
+// 星期与图片文件的对应关系
+const mascotByWeekday = {
+  Mon: '/timer-mascot-mon.png',
+  Tue: '/timer-mascot-tue.png',
+  Wed: '/timer-mascot-wed.png',
+  Thu: '/timer-mascot-thu.png',
+  Fri: '/timer-mascot-fri.png',
+  Sat: '/timer-mascot-sat.png',
+  Sun: '/timer-mascot-sun.png'
+};
+
+// 使用北京时间判断星期
+const beijingWeekdayFormatter = new Intl.DateTimeFormat('en-US', {
+  timeZone: 'Asia/Shanghai',
+  weekday: 'short'
+});
+
+function updateTimerMascot() {
+  if (!timerMascot) return;
+
+  // 获取北京时间对应的星期
+  const weekday = beijingWeekdayFormatter.format(new Date());
+
+  // 找到当天对应的图片
+  const nextSrc = mascotByWeekday[weekday] || mascotByWeekday.Mon;
+
+  // 图片发生变化时才重新加载
+  if (timerMascot.getAttribute('src') !== nextSrc) {
+    timerMascot.setAttribute('src', nextSrc);
+  }
+}
+
+// 页面打开时立即切换
+updateTimerMascot();
+
+// 每分钟检查一次，防止跨越午夜后图片没有更新
+setInterval(updateTimerMascot, 60_000);
+
 const stages = ['QUEUED', 'SEGMENTING', 'REVIEWING', 'SYNTHESIZING', 'ASSEMBLING'];
 const labels = { CREATED: '已保存', QUEUED: '等待生成', SEGMENTING: '识别角色', REVIEWING: '复核分角', SYNTHESIZING: '合成配音', ASSEMBLING: '整理音轨', COMPLETED: '可以收听', FAILED: '生成失败' };
 const descriptions = { QUEUED: '故事已排队，即将开始', SEGMENTING: '正在辨认故事里的每一个声音', REVIEWING: '再次检查角色与对白', SYNTHESIZING: '正在为角色录制声音与单词时间轴', ASSEMBLING: '正在拼接音频，整理阅读时间轴' };
@@ -33,6 +78,7 @@ let resultLoadedFor = null;
 let frame = null;
 let wordNodes = [];
 let sentenceNodes = [];
+let paragraphNodes = [];
 let activeWord = -1;
 let activeSentence = -1;
 let selectedSentence = -1;
@@ -51,6 +97,12 @@ const sidebar = bindSidebar({
   narrowScreen: window.matchMedia('(max-width: 760px)'),
   read: stored,
   write: remember
+});
+
+const followReader = bindReaderFollow({
+  button: $('reader-follow'), state: $('reader-follow-state'), player: $('player'), viewport: window,
+  currentWord: () => wordNodes[activeWord], paragraphs: () => paragraphNodes,
+  read: stored, write: remember
 });
 
 const listening = bindListening({
@@ -240,7 +292,7 @@ function resetPlayer() {
   audio.load();
   cancelAnimationFrame(frame); frame = null;
   result = null; resultLoadedFor = null;
-  wordNodes = []; sentenceNodes = [];
+  wordNodes = []; sentenceNodes = []; paragraphNodes = [];
   activeWord = -1; activeSentence = -1; selectedSentence = -1;
   loopEnabled = false;
   $('loop-sentence').setAttribute('aria-pressed', 'false');
@@ -451,6 +503,7 @@ function loadResult(loaded) {
     return node;
   });
   if (fragment.textContent !== loaded.text) throw new Error('阅读器无法完整保留原文。');
+  paragraphNodes = paragraphStartWords(loaded.text, loaded.words).map((index) => wordNodes[index]);
   result = loaded;
   $('story-reader').replaceChildren(fragment);
   $('reading-view').hidden = false;
@@ -487,6 +540,7 @@ function synchronize() {
     wordNodes[activeWord]?.classList.remove('active');
     wordNodes[word]?.classList.add('active');
     activeWord = word;
+    followReader();
   }
   const sentence = findActiveIndex(result.sentences, time);
   if (sentence !== activeSentence) {

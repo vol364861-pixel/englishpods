@@ -31,6 +31,12 @@
         </button>
       </div>
       <div id="sidebar-content" class="sidebar-content">
+        <button id="reader-follow" class="reader-follow" type="button" aria-pressed="true">
+          <span class="reader-follow-icon" aria-hidden="true">✦</span>
+          <span>页面跟随</span>
+          <span id="reader-follow-state" class="reader-follow-state" aria-hidden="true">开启</span>
+          <span class="reader-follow-switch" aria-hidden="true"></span>
+        </button>
         <div class="shelf-heading"><h2>我的故事</h2><button id="refresh-history" class="text-button" type="button" aria-label="刷新故事列表">刷新</button></div>
         <div class="shelf-search">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" aria-hidden="true"><circle cx="10.5" cy="10.5" r="5.5"/><path d="m15 15 4 4"/></svg>
@@ -54,7 +60,7 @@
       <header class="page-header">
         <div><span class="eyebrow">YOUR DAILY STORY SPACE</span><h1 id="page-title">在故事里，听懂英语。</h1><p id="page-subtitle">把一段文字，变成可以慢慢听、反复读的故事。</p></div>
         <div id="listening-timer" class="listening-timer" role="timer" aria-label="今日收听时长（北京时间）">
-          <img src="/timer-mascot.webp" alt="" width="360" height="178">
+          <img id = "timer-mascot" src="/timer-mascot-mon.png" alt="" width="1774" height="887">
           <span class="timer-label"><span aria-hidden="true"></span>今日收听 · 北京时间</span>
           <span id="listening-timer-value">00:00:00</span>
         </div>

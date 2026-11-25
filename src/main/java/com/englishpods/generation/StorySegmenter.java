@@ -78,8 +78,10 @@ final class StorySegmenter {
                     || speaker.codePoints().anyMatch(Character::isISOControl)
                     || allowed.isEmpty() || (!fixedFirstPerson && !allowed.contains(voice)) || voices.containsKey(speaker))
                 throw new GenerationException("角色性别与音色映射无效：男声 alex/ben/sam，女声 maya/june/betty，未知性别 sam；旁白独立");
-            if (!fixedFirstPerson && List.of("alex", "ben", "sam", "maya", "june", "betty").contains(speaker) && !speaker.equals(voice))
-                throw new GenerationException("故事中的同名角色必须使用对应固定音色");
+            if (!fixedFirstPerson && List.of("alex", "ben", "sam", "maya", "june", "betty").contains(speaker)) {
+                if (!allowed.contains(speaker)) throw new GenerationException("故事中的同名角色性别与固定音色不匹配");
+                voice = speaker;
+            }
             voices.put(speaker, new StoryCasting.CharacterVoice(gender, voice, firstPerson));
         });
         if (voices.values().stream().filter(StoryCasting.CharacterVoice::firstPerson).count() > 1)
